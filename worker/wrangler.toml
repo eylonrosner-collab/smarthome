@@ -1,0 +1,20 @@
+name = "smarthome"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+# Placeholder replaced by deploy.sh on first deploy. Never put real secrets here.
+[[kv_namespaces]]
+binding = "RULES"
+id = "00000000000000000000000000000000"
+
+[ai]
+binding = "AI"
+
+[vars]
+TUYA_BASE = "https://openapi.tuyaeu.com"
+ALLOWED_ORIGIN = "https://eylonrosner-collab.github.io"
+AI_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+
+[triggers]
+crons = ["*/5 * * * *"]

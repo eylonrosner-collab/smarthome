@@ -1,1 +1,87 @@
-# smarthome
+# הבית והגינה
+
+לוח שליטה לבית ולגינה: מתגים, תריסים, מזגנים (שלט IR), דוד, וארבעה אזורי השקיה ב-Hydrawise. האתר סטטי ואין בו סודות. כל הקריאות ל-Tuya ול-Hydrawise עוברות דרך Cloudflare Worker ששומר את המפתחות אצלו.
+
+הממשק בעברית, מימין לשמאל, ומותאם לטלפון.
+
+## שימוש
+
+1. פותחים את [https://eylonrosner-collab.github.io/smarthome/](https://eylonrosner-collab.github.io/smarthome/) בטלפון.
+2. מזינים את הסיסמה פעם אחת. היא נשמרת רק בדפדפן (`localStorage`), לא באתר.
+3. בכרטיס של כל מכשיר: הדלקה וכיבוי של כל מתג, פתיחה/סגירה/עצירה/מיקום לתריס, הפעלה/מצב/טמפרטורה למזגן, והשקיה/עצירה/השהיה לאזור.
+4. בלשונית **תרחישים** כותבים משפט בעברית או באנגלית. המערכת מציגה בעברית מה היא הבינה, ורק אחרי אישור התרחיש נשמר.
+5. בלשונית **יומן** רואים מה רץ לאחרונה. בדיקה אוטומטית רצה כל חמש דקות לפי שעון ישראל.
+
+דוגמאות:
+
+- `כשלחות הקרקע מתחת ל-30% השקה את Back Lawn ל-10 דקות`
+- `כל יום ב-19:00 סגור את תריסי הסלון והדלק תאורת שביל`
+- `סצנה: ערב סרט`
+
+תרחיש של חיישן לא יופעל שוב ושוב כל עוד התנאי מתקיים: בהשקיה יש המתנה של שלוש שעות לפחות. תרחיש של שעה רץ פעם אחת בחלון של עשר דקות סביב השעה שנבחרה.
+
+חיישן לחות קרקע של Tuya (קטגוריה כמו `zwjcy`) יופיע בגינה עם לחות, טמפרטורה וסוללה ברגע שהוא מחובר לחשבון. אין צורך בעדכון קוד בשביל להציג אותו.
+
+לפני שה-Worker פרוס אפשר לפתוח `?mock=1` ולראות תצוגת הדגמה.
+
+## What runs where
+
+| Piece | Role |
+| --- | --- |
+| `docs/` | Static Hebrew UI. GitHub Pages serves it at `/smarthome/`. |
+| `docs/config.js` | The only site setting: the public Worker URL. |
+| `worker/` | Cloudflare Worker. Holds `TUYA_ACCESS_ID`, `TUYA_ACCESS_SECRET`, `HYDRAWISE_API_KEY`, and `DASH_PASSWORD`. |
+| Workers KV `RULES` | Saved scenarios and the activity log. |
+| Workers AI | Turns a free-text scenario into a JSON rule. Model: `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. |
+| Cron `*/5 * * * *` | Evaluates enabled rules in `Asia/Jerusalem`. |
+
+The browser sends `Authorization: Bearer <password>`. CORS allows only `https://eylonrosner-collab.github.io`.
+
+Tuya uses the EU host `https://openapi.tuyaeu.com`. Signing matches the working Python client: HMAC-SHA256 over `client_id + token + timestamp + METHOD + "\n" + sha256(body) + "\n\n" + path`, with query keys sorted. Device status tries `/v1.0/devices/{id}/status` and falls back to `/v2.0/cloud/thing/{id}/shadow/properties`. Air conditioners are sent through the IR multi-key API `POST /v2.0/infrareds/{infrared_id}/air-conditioners/{remote_id}/scenes/command`.
+
+Hydrawise uses API v1: `statusschedule.php`, `customerdetails.php`, and `setzone.php` (`run` custom seconds, `stop`, `suspend` until a unix time, `period_id=0` to resume).
+
+## Deploy the Worker
+
+Create a Cloudflare API token with **Account / Workers Scripts / Edit** and **Account / Workers KV Storage / Edit**. Turn on Workers AI for the account (the AI binding). On the Tuya cloud project, IoT Core is required for status and commands, and **IR Control Hub** is required for the air conditioners.
+
+From a shell, with the secrets only in the environment:
+
+```bash
+export CLOUDFLARE_API_TOKEN="..."
+export CLOUDFLARE_ACCOUNT_ID="..."
+export TUYA_ACCESS_ID="..."
+export TUYA_ACCESS_SECRET="..."
+export HYDRAWISE_API_KEY="..."
+export DASH_PASSWORD="..."
+
+cd worker
+chmod +x deploy.sh
+./deploy.sh --write-config
+```
+
+The script creates the KV namespace `smarthome-RULES` if it does not exist, writes its id into `worker/wrangler.toml`, uploads the four secrets, deploys with `npx wrangler`, prints the `workers.dev` URL, and with `--write-config` sets that URL in `docs/config.js`.
+
+Commit and push `docs/config.js` and the updated `worker/wrangler.toml` (the namespace id is not a secret). Do not commit `.dev.vars`.
+
+## GitHub Pages
+
+1. On GitHub: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
+2. Push to `main`. The workflow [`.github/workflows/pages.yml`](.github/workflows/pages.yml) publishes the `docs/` folder.
+3. Open `https://eylonrosner-collab.github.io/smarthome/` and sign in with `DASH_PASSWORD`.
+
+Until `docs/config.js` points at the Worker, the password form explains that, and **תצוגת הדגמה** shows the layout with sample devices.
+
+## Tests
+
+No cloud credentials are required.
+
+```bash
+cd worker
+npm install
+npm test
+npm run typecheck
+npm run dry-run
+```
+
+`npm test` checks the Tuya signature against known HMAC vectors, Hebrew/English rule parsing, Jerusalem-time evaluation and cooldowns, Hydrawise query parameters, soil-sensor normalization, and HTML rendering of the mock dashboard.
