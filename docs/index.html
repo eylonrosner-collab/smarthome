@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#145c34">
+  <title>הבית והגינה</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div id="lock">
+    <form id="login-form">
+      <p class="brand">🏡</p>
+      <h1>הבית והגינה</h1>
+      <p>סיסמה אחת ללוח. היא נשמרת רק במכשיר הזה.</p>
+      <p id="setup-note" class="warn" hidden></p>
+      <label for="password">סיסמה</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <p id="login-error" class="warn" hidden></p>
+      <button type="submit">כניסה</button>
+      <button type="button" id="demo-btn" class="btn ghost">תצוגת הדגמה בלי שרת</button>
+    </form>
+  </div>
+  <div id="app" hidden>
+    <header>
+      <div>
+        <h1>🏡 הבית והגינה</h1>
+        <p id="meta"></p>
+      </div>
+      <div class="header-actions">
+        <button type="button" id="refresh">רענון</button>
+        <button type="button" id="logout">יציאה</button>
+      </div>
+    </header>
+    <div id="kpis" class="kpis"></div>
+    <div id="banner" class="banner" hidden></div>
+    <main id="view-home"></main>
+    <main id="view-rules" hidden>
+      <section class="composer">
+        <h2>תרחיש חדש</h2>
+        <p class="sub">כתבו בעברית או באנגלית. שום דבר לא נשמר לפני שתאשרו את הניסוח.</p>
+        <label for="rule-text">המשפט</label>
+        <textarea id="rule-text" rows="3" placeholder="למשל: כל יום ב-19:00 סגור את תריסי הסלון והדלק תאורת שביל"></textarea>
+        <div class="examples" id="examples"></div>
+        <button type="button" class="btn primary" id="parse-btn">הציגו לי מה הבנתם</button>
+        <div id="preview"></div>
+      </section>
+      <h2>תרחישים שמורים</h2>
+      <section id="rule-list"></section>
+    </main>
+    <main id="view-log" hidden></main>
+    <div id="toast" hidden></div>
+    <nav class="tabbar" aria-label="ניווט">
+      <button type="button" data-tab="home">בית</button>
+      <button type="button" data-tab="rules">תרחישים</button>
+      <button type="button" data-tab="log">יומן</button>
+    </nav>
+  </div>
+  <script>
+    window.addEventListener("error", (event) => {
+      const el = document.getElementById("login-error");
+      if (!el || !event.message) return;
+      el.hidden = false;
+      el.textContent = event.message;
+    });
+  </script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
