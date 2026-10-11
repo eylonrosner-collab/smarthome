@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { planRuleActions } from "../src/execute.ts";
-import { interpretRule, shouldFire, type Rule, type World } from "../src/rules.ts";
+import { assertSavable, interpretRule, shouldFire, type Rule, type World } from "../src/rules.ts";
 import type { CatalogItem, Snapshot } from "../src/types.ts";
 
 const catalog: CatalogItem[] = [
@@ -58,6 +58,26 @@ test("english moisture sentence waters Back Lawn for 10 minutes", async () => {
   assert.match(draft.summaryHe, /Back Lawn/);
   assert.match(draft.summaryHe, /30%/);
   assert.match(draft.summaryHe, /180/);
+});
+
+test("moisture rule without a soil sensor warns in Hebrew and cannot be saved", async () => {
+  const noSoil = catalog.filter((item) => item.id !== "soil");
+  for (const text of [
+    "when soil moisture is below 30% water Back Lawn for 10 minutes",
+    "כשלחות הקרקע מתחת ל-30% השקה את Back Lawn ל-10 דקות",
+  ]) {
+    const draft = await interpretRule(text, noSoil);
+    assert.equal(draft.trigger.type, "sensor", text);
+    if (draft.trigger.type === "sensor") {
+      assert.equal(draft.trigger.deviceId, undefined);
+      assert.equal(draft.trigger.metric, "moisture");
+      assert.equal(draft.trigger.value, 30);
+    }
+    assert.equal(draft.actions[0]?.type, "zone");
+    assert.match(draft.issues.join("\n"), /אין עדיין חיישן לחות קרקע/);
+    assert.match(draft.issues.join("\n"), /אי אפשר לשמור/);
+    assert.throws(() => assertSavable(draft), /חיישן לחות קרקע/);
+  }
 });
 
 test("hebrew moisture sentence matches the same zone", async () => {

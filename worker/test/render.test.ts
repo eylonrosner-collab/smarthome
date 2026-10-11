@@ -58,8 +58,8 @@ test("the static page is Hebrew, RTL, and relative to the project site", () => {
   assert.match(html, /src="\.\/app\.js(\?[^"]*)?"/);
   assert.match(html, /href="\.\/styles\.css"/);
   const config = readFileSync(new URL("../../docs/config.js", import.meta.url), "utf8");
-  assert.match(config, /YOUR-SUBDOMAIN/);
-  assert.doesNotMatch(config, /ACCESS_SECRET|HYDRAWISE|DASH_PASSWORD|api_key/i);
+  assert.match(config, /https:\/\/smarthome\.eylonrosner\.workers\.dev/);
+  assert.doesNotMatch(config, /YOUR-SUBDOMAIN|ACCESS_SECRET|HYDRAWISE|DASH_PASSWORD|api_key/i);
 });
 
 test("model output fences become JSON and the prompt sees the live catalog", () => {

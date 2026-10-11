@@ -20,7 +20,7 @@
 
 תרחיש של חיישן לא יופעל שוב ושוב כל עוד התנאי מתקיים: בהשקיה יש המתנה של שלוש שעות לפחות. תרחיש של שעה רץ פעם אחת בחלון של עשר דקות סביב השעה שנבחרה.
 
-חיישן לחות קרקע של Tuya (קטגוריה כמו `zwjcy`) יופיע בגינה עם לחות, טמפרטורה וסוללה ברגע שהוא מחובר לחשבון. אין צורך בעדכון קוד בשביל להציג אותו.
+חיישן לחות קרקע של Tuya (קטגוריה כמו `zwjcy`) יופיע בגינה עם לחות, טמפרטורה וסוללה ברגע שהוא מחובר לחשבון. אין צורך בעדכון קוד בשביל להציג אותו. תרחיש שמסתמך על לחות קרקע, כשעדיין אין חיישן כזה, מציג אזהרה בעברית וכפתור השמירה נשאר כבוי עד שהחיישן מופיע בחשבון.
 
 לפני שה-Worker פרוס אפשר לפתוח `?mock=1` ולראות תצוגת הדגמה.
 
@@ -60,7 +60,7 @@ chmod +x deploy.sh
 ./deploy.sh --write-config
 ```
 
-The script creates the KV namespace `smarthome-RULES` if it does not exist, writes its id into `worker/wrangler.toml`, uploads the four secrets, deploys with `npx wrangler`, prints the `workers.dev` URL, and with `--write-config` sets that URL in `docs/config.js`.
+The script reuses the KV namespace already set in `wrangler.toml`, or an existing namespace titled `RULES` (Wrangler 4) or `smarthome-RULES`. It creates `RULES` only when none of those exist, writes the id into `worker/wrangler.toml`, uploads the four secrets, deploys with `npx wrangler`, prints the `workers.dev` URL, and with `--write-config` sets that URL in `docs/config.js`. A second run does not create another namespace.
 
 Commit and push `docs/config.js` and the updated `worker/wrangler.toml` (the namespace id is not a secret). Do not commit `.dev.vars`.
 
@@ -74,7 +74,7 @@ Until `docs/config.js` points at the Worker, the password form explains that, an
 
 ## Tests
 
-No cloud credentials are required.
+No cloud credentials are required. Node.js 22 or newer (`engines` in `worker/package.json`; Wrangler 4 needs it).
 
 ```bash
 cd worker

@@ -47,27 +47,66 @@ const tomlPath = "wrangler.toml";
 const toml = readFileSync(tomlPath, "utf8");
 const name = toml.match(/^name\s*=\s*"([^"]+)"/m)?.[1];
 if (!name) throw new Error("wrangler.toml is missing name");
-const title = `${name}-RULES`;
+
+// Wrangler 4 names `kv namespace create RULES` exactly "RULES".
+// Older output used "<worker>-RULES". Accept either so a re-run never creates a second namespace.
+const binding = "RULES";
+const placeholder = "00000000000000000000000000000000";
+const acceptedTitles = new Set([binding, `${name}-${binding}`]);
 
 function wrangler(args) {
   return execSync(`npx wrangler ${args}`, { encoding: "utf8" });
 }
 
-const listRaw = wrangler("kv namespace list");
-const listStart = listRaw.indexOf("[");
-const list = listStart >= 0 ? JSON.parse(listRaw.slice(listStart)) : [];
-let id = list.find((ns) => ns.title === title)?.id;
-if (!id) {
-  const created = wrangler("kv namespace create RULES");
-  id = created.match(/[0-9a-f]{32}/i)?.[0];
-  if (!id) {
-    console.error(created);
-    throw new Error("Could not read the new KV namespace id");
-  }
-  console.log("Created KV namespace", title);
-} else {
-  console.log("Using KV namespace", title);
+function parseList(raw) {
+  const start = raw.indexOf("[");
+  if (start < 0) return [];
+  return JSON.parse(raw.slice(start));
 }
+
+function configuredId(text) {
+  const id = text.match(/id\s*=\s*"([0-9a-f]{32})"/i)?.[1] || "";
+  return id && id !== placeholder ? id : "";
+}
+
+function pick(list, preferId) {
+  if (preferId) {
+    const byId = list.find((ns) => ns.id === preferId);
+    if (byId) return byId;
+  }
+  const titled = list.filter((ns) => acceptedTitles.has(ns.title));
+  return titled.find((ns) => ns.title === binding) || titled[0] || null;
+}
+
+const prefer = configuredId(toml);
+let list = parseList(wrangler("kv namespace list"));
+let found = pick(list, prefer);
+if (!found && prefer) {
+  found = { id: prefer, title: binding };
+  console.log("Keeping configured KV id", prefer);
+} else if (!found) {
+  let createdOut = "";
+  try {
+    createdOut = wrangler(`kv namespace create ${binding}`);
+    console.log("Created KV namespace", binding);
+  } catch (err) {
+    createdOut = `${err.stdout || ""}\n${err.stderr || ""}`;
+    console.log("KV namespace already exists; looking it up");
+  }
+  list = parseList(wrangler("kv namespace list"));
+  found = pick(list, "");
+  if (!found) {
+    const id = createdOut.match(/[0-9a-f]{32}/i)?.[0];
+    if (id) found = { id, title: binding };
+  }
+  if (!found) {
+    console.error(createdOut);
+    throw new Error("Could not find or create the RULES KV namespace");
+  }
+} else {
+  console.log("Using KV namespace", found.title || binding);
+}
+const id = found.id;
 const next = toml.replace(/id\s*=\s*"[0-9a-f]{32}"/i, `id = "${id}"`);
 if (next !== toml) writeFileSync(tomlPath, next);
 console.log("KV id", id);

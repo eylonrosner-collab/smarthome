@@ -2,11 +2,12 @@ name = "smarthome"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"
 workers_dev = true
+preview_urls = false
 
-# Placeholder replaced by deploy.sh on first deploy. Never put real secrets here.
+# Namespace id is not a secret. deploy.sh reuses this id when it is already set.
 [[kv_namespaces]]
 binding = "RULES"
-id = "00000000000000000000000000000000"
+id = "e6884d87a1a042c8ac3067723d93ef45"
 
 [ai]
 binding = "AI"

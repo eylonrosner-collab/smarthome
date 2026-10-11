@@ -359,6 +359,7 @@ export function normalizeDraft(raw: unknown, catalog: CatalogItem[], sourceText:
     usedFallback: false,
     issues,
   };
+  draft.issues = [...new Set(issues)];
   draft.summaryHe = summarizeRule(draft);
   return draft;
 }
@@ -396,10 +397,8 @@ function normalizeTrigger(raw: unknown, catalog: CatalogItem[], issues: string[]
       issues.push("תנאי החיישן לא ברור.");
       return null;
     }
-    const bound = bindDevice(String(t.deviceName || ""), catalog, (d) => (d.metrics || []).includes(metric));
-    const deviceId = typeof t.deviceId === "string" && catalog.some((c) => c.id === t.deviceId) ? t.deviceId : bound?.id;
-    const deviceName = bound?.name || (typeof t.deviceName === "string" ? t.deviceName : undefined);
-    return { type: "sensor", deviceId, deviceName, metric, op, value };
+    const sensor = attachSensor(String(t.deviceName || ""), t.deviceId, metric, catalog, issues);
+    return { type: "sensor", deviceId: sensor.deviceId, deviceName: sensor.deviceName, metric: sensor.metric, op, value };
   }
   return null;
 }
@@ -412,8 +411,8 @@ function normalizeCondition(raw: unknown, catalog: CatalogItem[], issues: string
     const op = normalizeOp(c.op);
     const value = Number(c.value);
     if (!op || !Number.isFinite(value)) return null;
-    const bound = bindDevice(String(c.deviceName || ""), catalog, (d) => (d.metrics || []).includes(metric));
-    return { type: "sensor", deviceId: bound?.id || (typeof c.deviceId === "string" ? c.deviceId : undefined), deviceName: bound?.name, metric, op, value };
+    const sensor = attachSensor(String(c.deviceName || ""), c.deviceId, metric, catalog, issues);
+    return { type: "sensor", deviceId: sensor.deviceId, deviceName: sensor.deviceName, metric: sensor.metric, op, value };
   }
   if (c.type === "time_window" && clockOk(String(c.start)) && clockOk(String(c.end))) {
     return { type: "time_window", start: String(c.start), end: String(c.end) };
@@ -542,6 +541,35 @@ function resolveDevice(raw: RawAction, catalog: CatalogItem[], pred: (d: Catalog
     if (gang) return gang;
   }
   return hits[0] || null;
+}
+
+const SOIL_MISSING_HE = "אין עדיין חיישן לחות קרקע בחשבון. אי אפשר לשמור את התרחיש עד שהחיישן מחובר.";
+
+function canonicalMetric(metric: string): string {
+  const m = metric.toLowerCase().replace(/\s+/g, "_");
+  if (["moisture", "humidity", "soil_humidity", "soilhumidity", "humidity_value"].includes(m)) return "moisture";
+  if (["temperature", "temp", "temp_current"].includes(m)) return "temperature";
+  if (["battery", "battery_percentage", "battery_state"].includes(m)) return "battery";
+  return m;
+}
+
+function attachSensor(
+  phrase: string,
+  rawId: unknown,
+  metric: string,
+  catalog: CatalogItem[],
+  issues: string[],
+): { deviceId?: string; deviceName?: string; metric: string } {
+  const canonical = canonicalMetric(metric);
+  const matches = (d: CatalogItem) => d.kind === "device" && (d.metrics || []).includes(canonical);
+  const bound = bindDevice(phrase, catalog, matches);
+  const deviceId = typeof rawId === "string" && catalog.some((c) => c.id === rawId && matches(c)) ? rawId : bound?.id;
+  if (canonical === "moisture" && !deviceId) {
+    const count = catalog.filter(matches).length;
+    issues.push(count === 0 ? SOIL_MISSING_HE : "לא הצלחתי לשייך את התנאי לחיישן לחות קרקע. ציינו את שם החיישן.");
+  }
+  const deviceName = bound?.name || (phrase.trim() ? phrase.trim() : undefined);
+  return { deviceId, deviceName, metric: canonical };
 }
 
 function bindDevice(phrase: string, catalog: CatalogItem[], pred: (d: CatalogItem) => boolean): CatalogItem | null {
