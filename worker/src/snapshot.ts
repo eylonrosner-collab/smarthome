@@ -1,4 +1,5 @@
-import { controllerNote, fetchHydrawise, presentZones } from "./hydrawise";
+import { HYDRO_UNAVAILABLE, readHydrawise, zonesFromCache } from "./hydro-cache";
+import { controllerNote } from "./hydrawise";
 import { applyPrefs, loadPrefs } from "./prefs";
 import { catalogItemFromDevice, deviceTitle, presentDevice } from "./present";
 import { jerusalemLabel } from "./time";
@@ -15,12 +16,20 @@ const SECTION_META: Record<SectionId, { icon: string; title: string }> = {
 };
 
 const ORDER: SectionId[] = ["garden", "climate", "lights", "curtains", "power", "other"];
-const CACHE_MS = 15_000;
+const CACHE_MS = 20_000;
+/** Full Tuya status sweep. fresh=1 does not bypass this. */
+export const TUYA_MIN_MS = 60_000;
+const TUYA_KEY = "tuya_devices";
 
 let memory: { at: number; data: Snapshot } | null = null;
 
-export function invalidateSnapshot(): void {
+export async function invalidateSnapshot(kv?: Pick<KVNamespace, "delete">): Promise<void> {
   memory = null;
+  try {
+    await kv?.delete("snapshot_cache");
+  } catch {
+    /* the short assembly cache expires on its own */
+  }
 }
 
 export function groupSnapshot(input: {
@@ -130,44 +139,68 @@ async function loadRawSnapshot(env: Env, opts?: { fresh?: boolean; now?: Date; c
 
 async function buildFresh(env: Env, now: Date, existing?: TuyaClient): Promise<Snapshot> {
   const errors: string[] = [];
-  let zones: ZoneView[] = [];
-  let controllerName = "Hydrawise";
-  let note = "";
-  try {
-    const { schedule, controller } = await fetchHydrawise(env.HYDRAWISE_API_KEY);
-    controllerName = String(controller.name || "My Controller");
-    note = controllerNote(controller, schedule, now);
-    zones = presentZones(schedule, now);
-  } catch (err) {
-    errors.push(`Hydrawise: ${err instanceof Error ? err.message : "שגיאה"}`);
-  }
+  const hydro = await readHydrawise(env.RULES, env.HYDRAWISE_API_KEY || "", now.getTime());
+  const zones = zonesFromCache(hydro, now);
+  const controllerName = String(hydro.controller.name || "Hydrawise");
+  const note = controllerNote(hydro.controller, hydro.schedule || {}, now);
+  if (!zones.length && hydro.error) errors.push(HYDRO_UNAVAILABLE);
 
-  let devices: DeviceView[] = [];
-  try {
-    const client = existing || new TuyaClient({
-      accessId: env.TUYA_ACCESS_ID,
-      accessSecret: env.TUYA_ACCESS_SECRET,
-      base: env.TUYA_BASE,
-    });
-    const raw = (await client.listDevices()) as TuyaDevice[];
-    const links = await linkAirConditioners(client, raw);
-    const presented = await mapPool(raw, 5, async (d) => {
-      let status: Record<string, unknown> | null = null;
-      let names: Record<string, string> = {};
-      try {
-        status = await client.deviceStatus(d.id);
-      } catch (err) {
-        errors.push(`${deviceTitle(d)}: ${err instanceof Error ? err.message : "סטטוס"}`);
-      }
-      if (status && (d.category === "kg" || d.category === "tgkg")) names = await client.gangNames(d.id);
-      return presentDevice(d, status, names, now, links.get(d.id));
-    });
-    devices = presented;
-  } catch (err) {
-    errors.push(`Tuya: ${err instanceof Error ? err.message : "שגיאה"}`);
-  }
+  const tuya = await loadTuya(env, now, existing);
+  errors.push(...tuya.errors);
+  return groupSnapshot({ devices: tuya.devices, zones, controllerName, controllerNote: note, errors, now });
+}
 
-  return groupSnapshot({ devices, zones, controllerName, controllerNote: note, errors, now });
+type TuyaCache = { fetchedAt: number; devices: DeviceView[] };
+
+async function loadTuya(env: Env, now: Date, existing?: TuyaClient): Promise<{ devices: DeviceView[]; errors: string[] }> {
+  let cached: TuyaCache | null = null;
+  try {
+    const raw = await env.RULES.get(TUYA_KEY, "json") as TuyaCache | null;
+    if (raw?.devices && Array.isArray(raw.devices)) cached = { fetchedAt: Number(raw.fetchedAt) || 0, devices: raw.devices };
+  } catch {
+    cached = null;
+  }
+  if (cached && now.getTime() - cached.fetchedAt < TUYA_MIN_MS) return { devices: cached.devices, errors: [] };
+  try {
+    await env.RULES.put(TUYA_KEY, JSON.stringify({ fetchedAt: now.getTime(), devices: cached?.devices || [] }));
+  } catch {
+    /* claim is best-effort */
+  }
+  try {
+    const loaded = await fetchPresented(env, now, existing);
+    try {
+      await env.RULES.put(TUYA_KEY, JSON.stringify({ fetchedAt: now.getTime(), devices: loaded.devices }));
+    } catch {
+      /* next call may repeat the sweep */
+    }
+    return loaded;
+  } catch (err) {
+    if (cached?.devices.length) return { devices: cached.devices, errors: ["Tuya לא רוענן, מוצג המצב האחרון."] };
+    return { devices: [], errors: [`Tuya: ${err instanceof Error ? err.message : "שגיאה"}`] };
+  }
+}
+
+async function fetchPresented(env: Env, now: Date, existing?: TuyaClient): Promise<{ devices: DeviceView[]; errors: string[] }> {
+  const errors: string[] = [];
+  const client = existing || new TuyaClient({
+    accessId: env.TUYA_ACCESS_ID,
+    accessSecret: env.TUYA_ACCESS_SECRET,
+    base: env.TUYA_BASE,
+  });
+  const raw = (await client.listDevices()) as TuyaDevice[];
+  const links = await linkAirConditioners(client, raw);
+  const devices = await mapPool(raw, 5, async (d) => {
+    let status: Record<string, unknown> | null = null;
+    let names: Record<string, string> = {};
+    try {
+      status = await client.deviceStatus(d.id);
+    } catch (err) {
+      errors.push(`${deviceTitle(d)}: ${err instanceof Error ? err.message : "סטטוס"}`);
+    }
+    if (status && (d.category === "kg" || d.category === "tgkg")) names = await client.gangNames(d.id);
+    return presentDevice(d, status, names, now, links.get(d.id));
+  });
+  return { devices, errors };
 }
 
 async function linkAirConditioners(client: TuyaClient, devices: TuyaDevice[]): Promise<Map<string, { infraredId?: string; remoteId?: string }>> {

@@ -10,7 +10,7 @@
 2. מזינים את הסיסמה פעם אחת. היא נשמרת רק בדפדפן (`localStorage`), לא באתר.
 3. בכרטיס של כל מכשיר: הדלקה וכיבוי של כל מתג, פתיחה/סגירה/עצירה/מיקום לתריס, הפעלה/מצב/טמפרטורה למזגן, והשקיה/עצירה/השהיה לאזור. «שינוי שם» (העיפרון) ו«הסתר» זמינים לכל מכשיר ולכל מתג. מה שמוסתר נעלם מהלוח; «הצג מוסתרים» מחזיר אותו עם סימון ואפשרות להציג שוב. השם שנבחר מחליף את שם ה-Tuya גם בלוח וגם כשכותבים תרחיש, ונשמר בשרת כדי שיהיה זהה בטלפון ובמחשב.
 4. בלשונית **תרחישים** כותבים משפט בעברית או באנגלית. המערכת מציגה בעברית מה היא הבינה, ורק אחרי אישור התרחיש נשמר.
-5. בלשונית **יומן** רואים מה רץ לאחרונה. בדיקה אוטומטית רצה כל חמש דקות לפי שעון ישראל.
+5. בלשונית **יומן** רואים מה רץ לאחרונה. בדיקה אוטומטית רצה כל חמש דקות לפי שעון ישראל. הלוח מתרענן בערך פעם בדקה. אם Hydrawise עמוס, אזורי ההשקיה נשארים על המסך עם הסימון «נתונים ישנים» והשעה האחרונה שבה הם עודכנו.
 
 דוגמאות:
 
@@ -35,6 +35,7 @@
 | Workers KV `prefs` | Per-device and per-gang hide flags and display names. The dashboard and scenario parser use the display name. |
 | Workers AI | Turns a free-text scenario into a JSON rule. Model: `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. |
 | Cron `*/5 * * * *` | Evaluates enabled rules in `Asia/Jerusalem`. |
+| Hydrawise cache | `statusschedule.php` at most once a minute (or longer when the response includes `nextpoll`). A 429 keeps the last zones. |
 
 The browser sends `Authorization: Bearer <password>`. CORS allows only `https://eylonrosner-collab.github.io`.
 

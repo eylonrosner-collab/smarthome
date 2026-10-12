@@ -65,6 +65,7 @@ export type ZoneView = {
   nextLabel: string;
   durationLabel: string;
   periodLabel: string;
+  staleLabel?: string;
 };
 
 export type SectionView = {

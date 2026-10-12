@@ -18,6 +18,7 @@ const state = {
   preview: null,
   editingId: null,
   showHidden: readShowHidden(),
+  holdUntil: 0,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -117,9 +118,13 @@ async function api(path, opts = {}) {
 
 async function refresh(fresh) {
   if (state.mock) return;
-  state.snapshot = await api(`/api/snapshot${fresh ? "?fresh=1" : ""}`);
+  const snap = await api(`/api/snapshot${fresh ? "?fresh=1" : ""}`);
   state.rules = (await api("/api/rules")).rules || [];
   state.events = (await api("/api/activity")).events || [];
+  if (!(state.holdUntil && Date.now() < state.holdUntil)) {
+    state.snapshot = snap;
+    state.holdUntil = 0;
+  }
   paint();
 }
 
@@ -159,8 +164,10 @@ async function sendCommand(path, body, apply) {
     return;
   }
   await api(path, { method: "POST", body });
+  state.holdUntil = Date.now() + 60_000;
+  apply();
+  paint();
   toast("הפקודה נשלחה");
-  await refresh(true);
 }
 
 function demoPreview(text) {
@@ -301,6 +308,7 @@ function wire() {
       toast("ההדגמה לא מתרעננת מהבית");
       return;
     }
+    state.holdUntil = 0;
     refresh(true).then(() => toast("עודכן")).catch((err) => toast(err.message));
   });
 
@@ -372,7 +380,7 @@ function wire() {
   });
   setInterval(() => {
     if (!document.hidden && !state.mock && !$("app").hidden) refresh(false).catch(() => {});
-  }, 30000);
+  }, 60_000);
 }
 
 function openRename(slot, value, commit) {

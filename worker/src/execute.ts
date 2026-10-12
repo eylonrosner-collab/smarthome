@@ -1,6 +1,6 @@
-import { sendZone } from "./hydrawise";
+import { recordZoneCommand } from "./hydro-cache";
 import type { Action, Rule } from "./rules";
-import { TuyaClient } from "./tuya";
+import { TuyaClient, tuyaUserMessage } from "./tuya";
 import type { DeviceView, Env, Snapshot } from "./types";
 
 export type Planned =
@@ -102,18 +102,18 @@ export async function runPlanned(env: Env, planned: Planned[], client?: TuyaClie
     try {
       if (step.type === "zone") {
         const now = Math.floor(Date.now() / 1000);
-        const result = await sendZone(env.HYDRAWISE_API_KEY, {
+        const result = await recordZoneCommand(env.RULES, env.HYDRAWISE_API_KEY, {
           action: step.command,
           relayId: step.relayId,
           runSeconds: step.command === "run" ? Math.round((step.minutes || 10) * 60) : undefined,
           suspendUntilEpoch: step.command === "suspend" ? now + Math.round((step.suspendHours || 24) * 3600) : undefined,
-        });
+        }, Date.now());
         if (result.message_type === "error") throw new Error(result.message || "hydrawise");
         const verb = step.command === "run" ? `השקיה ${step.minutes} דק׳` : step.command === "stop" ? "עצירה" : "השהיה";
         done.push(`${step.label}: ${verb}`);
       } else if (step.type === "switch") {
         const r = await tuya.sendCommands(step.deviceId, [{ code: step.code, value: step.value }]);
-        if (!r.success) throw new Error(r.msg || "tuya");
+        if (!r.success) throw new Error(tuyaUserMessage(r.msg));
         done.push(`${step.label}: ${step.value ? "דולק" : "כבוי"}`);
       } else if (step.type === "dimmer") {
         const commands: { code: string; value: unknown }[] = [];
@@ -123,14 +123,14 @@ export async function runPlanned(env: Env, planned: Planned[], client?: TuyaClie
           commands.push({ code: brightCode, value: Math.round((step.percent / 100) * 1000) });
         }
         const r = await tuya.sendCommands(step.deviceId, commands);
-        if (!r.success) throw new Error(r.msg || "tuya");
+        if (!r.success) throw new Error(tuyaUserMessage(r.msg));
         done.push(`${step.label}: דימר`);
       } else if (step.type === "curtain") {
         const commands: { code: string; value: unknown }[] = [];
         if (step.command) commands.push({ code: "control", value: step.command });
         if (step.position != null) commands.push({ code: "percent_control", value: step.position });
         const r = await tuya.sendCommands(step.deviceId, commands);
-        if (!r.success) throw new Error(r.msg || "tuya");
+        if (!r.success) throw new Error(tuyaUserMessage(r.msg));
         done.push(`${step.label}: ${step.command || step.position + "%"}`);
       } else if (step.type === "ac") {
         const r = await tuya.sendAcCommand(step.infraredId, step.remoteId, {
@@ -139,7 +139,7 @@ export async function runPlanned(env: Env, planned: Planned[], client?: TuyaClie
           temp: step.temp,
           wind: step.wind,
         });
-        if (!r.success) throw new Error(r.msg || "tuya ir");
+        if (!r.success) throw new Error(tuyaUserMessage(r.msg));
         done.push(`${step.label}: ${step.power ? "דולק" : "כבוי"} ${step.temp}°`);
       }
     } catch (err) {

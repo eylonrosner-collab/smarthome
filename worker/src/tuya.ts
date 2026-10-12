@@ -71,6 +71,15 @@ export type TuyaResponse<T = unknown> = {
   result?: T;
 };
 
+/** Trial IoT Core rejects commands once the controllable-device pool is used up. */
+export function tuyaUserMessage(msg?: string): string {
+  const text = msg || "";
+  if (/controllable device pool quota|quota is insufficient/i.test(text)) {
+    return "מכסת השליטה של Tuya נגמרה. זו מגבלה של תוכנית הניסיון ב-IoT Core, לא תקלה בלוח. שדרוג התוכנית או המתנה לחידוש המכסה יחזירו את הפקודות.";
+  }
+  return text || "Tuya דחה את הפקודה";
+}
+
 export class TuyaError extends Error {
   constructor(
     message: string,
