@@ -8,7 +8,7 @@
 
 1. פותחים את [https://eylonrosner-collab.github.io/smarthome/](https://eylonrosner-collab.github.io/smarthome/) בטלפון.
 2. מזינים את הסיסמה פעם אחת. היא נשמרת רק בדפדפן (`localStorage`), לא באתר.
-3. בכרטיס של כל מכשיר: הדלקה וכיבוי של כל מתג, פתיחה/סגירה/עצירה/מיקום לתריס, הפעלה/מצב/טמפרטורה למזגן, והשקיה/עצירה/השהיה לאזור.
+3. בכרטיס של כל מכשיר: הדלקה וכיבוי של כל מתג, פתיחה/סגירה/עצירה/מיקום לתריס, הפעלה/מצב/טמפרטורה למזגן, והשקיה/עצירה/השהיה לאזור. «שינוי שם» (העיפרון) ו«הסתר» זמינים לכל מכשיר ולכל מתג. מה שמוסתר נעלם מהלוח; «הצג מוסתרים» מחזיר אותו עם סימון ואפשרות להציג שוב. השם שנבחר מחליף את שם ה-Tuya גם בלוח וגם כשכותבים תרחיש, ונשמר בשרת כדי שיהיה זהה בטלפון ובמחשב.
 4. בלשונית **תרחישים** כותבים משפט בעברית או באנגלית. המערכת מציגה בעברית מה היא הבינה, ורק אחרי אישור התרחיש נשמר.
 5. בלשונית **יומן** רואים מה רץ לאחרונה. בדיקה אוטומטית רצה כל חמש דקות לפי שעון ישראל.
 
@@ -32,6 +32,7 @@
 | `docs/config.js` | The only site setting: the public Worker URL. |
 | `worker/` | Cloudflare Worker. Holds `TUYA_ACCESS_ID`, `TUYA_ACCESS_SECRET`, `HYDRAWISE_API_KEY`, and `DASH_PASSWORD`. |
 | Workers KV `RULES` | Saved scenarios and the activity log. |
+| Workers KV `prefs` | Per-device and per-gang hide flags and display names. The dashboard and scenario parser use the display name. |
 | Workers AI | Turns a free-text scenario into a JSON rule. Model: `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. |
 | Cron `*/5 * * * *` | Evaluates enabled rules in `Asia/Jerusalem`. |
 

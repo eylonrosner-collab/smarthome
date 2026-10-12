@@ -20,13 +20,15 @@ export function formatWhen(iso) {
   }).format(date);
 }
 
-export function renderKpis(snapshot) {
-  const s = snapshot.stats;
+export function renderKpis(snapshot, opts) {
+  const showHidden = Boolean(opts?.showHidden);
+  const devices = (snapshot.sections || []).flatMap((s) => s.devices || []).filter((d) => showHidden || !d.hidden);
+  const online = devices.filter((d) => d.online).length;
   return [
-    kpi("מכשירים", s.devices),
-    kpi("מחוברים", s.online),
-    kpi("מנותקים", s.offline),
-    kpi("אזורי השקיה", s.zones),
+    kpi("מכשירים", devices.length),
+    kpi("מחוברים", online),
+    kpi("מנותקים", devices.length - online),
+    kpi("אזורי השקיה", snapshot.stats?.zones ?? 0),
   ].join("");
 }
 
@@ -34,7 +36,8 @@ function kpi(label, value) {
   return `<div class="kpi"><span>${esc(label)}</span><b>${esc(value)}</b></div>`;
 }
 
-export function renderHome(snapshot, rules) {
+export function renderHome(snapshot, rules, opts) {
+  const showHidden = Boolean(opts?.showHidden);
   const scenes = (rules || []).filter((r) => r.enabled && r.trigger?.type === "manual");
   const sceneRow = scenes.length
     ? `<div class="scenes" aria-label="סצנות">${scenes
@@ -42,17 +45,21 @@ export function renderHome(snapshot, rules) {
         .join("")}</div>`
     : "";
   const errors = (snapshot.errors || []).map((e) => `<div class="err">${esc(e)}</div>`).join("");
-  const sections = (snapshot.sections || []).map(renderSection).join("");
+  const sections = (snapshot.sections || []).map((section) => renderSection(section, showHidden)).filter(Boolean).join("");
   const empty = sections ? "" : `<div class="empty">אין מכשירים להצגה</div>`;
   return `${errors}${sceneRow}${sections}${empty}`;
 }
 
-function renderSection(section) {
-  const count = section.total ? `<span class="cnt">${section.online}/${section.total} מחוברים</span>` : "";
+function renderSection(section, showHidden) {
+  const devices = (section.devices || []).filter((d) => showHidden || !d.hidden);
+  const zones = section.zones || [];
+  if (!devices.length && !zones.length) return "";
+  const online = devices.filter((d) => d.online).length;
+  const count = devices.length ? `<span class="cnt">${online}/${devices.length} מחוברים</span>` : "";
   const sub = section.subtitle ? `<p class="sub">${esc(section.subtitle)}</p>` : "";
-  const zones = (section.zones || []).map(renderZone).join("");
-  const devices = (section.devices || []).map(renderDevice).join("");
-  return `<section><h2>${esc(section.icon)} ${esc(section.title)} ${count}</h2>${sub}<div class="grid">${zones}${devices}</div></section>`;
+  const zoneHtml = zones.map(renderZone).join("");
+  const deviceHtml = devices.map((device) => renderDevice(device, showHidden)).join("");
+  return `<section><h2>${esc(section.icon)} ${esc(section.title)} ${count}</h2>${sub}<div class="grid">${zoneHtml}${deviceHtml}</div></section>`;
 }
 
 function renderZone(zone) {
@@ -87,42 +94,58 @@ function renderZone(zone) {
   </article>`;
 }
 
-function renderDevice(device) {
+function renderDevice(device, showHidden) {
   const badge = device.online
     ? `<span class="badge on">מחובר</span>`
     : `<span class="badge off">מנותק</span>`;
+  const hiddenFlag = device.hidden ? `<span class="hidden-flag">מוסתר</span>` : "";
   const rows = (device.rows || []).map((r) => {
     const extra = r.label === "לחות קרקע" || r.label === "מיקום" ? bar(r.value) : "";
     return `${row(r.label, r.value)}${extra}`;
   }).join("");
-  const switches = (device.switches || []).map((sw) => toggle(device.id, sw)).join("");
-  const dimmers = (device.dimmers || []).map((d) => dimmer(device.id, d)).join("");
+  const switches = (device.switches || []).map((sw) => channelRow(device.id, sw, showHidden)).join("");
+  const dimmers = (device.dimmers || []).map((d) => dimmer(device.id, d, showHidden)).join("");
   const curtain = device.curtain ? curtainControls(device) : "";
   const ac = device.ac ? acControls(device) : "";
   const note = device.readOnlyNote ? `<p class="muted">${esc(device.readOnlyNote)}</p>` : "";
   const stale = device.staleText ? `<p class="stale">${esc(device.staleText)}</p>` : "";
-  return `<article class="card ${device.online ? "" : "offline"}" data-device-card="${esc(device.id)}">
+  return `<article class="card ${device.online ? "" : "offline"} ${device.hidden ? "is-hidden" : ""}" data-device-card="${esc(device.id)}" ${device.hidden ? "data-hidden-device" : ""}>
     <div class="head"><span class="ico">${esc(device.icon || "🔧")}</span>
-      <div class="t"><h3>${esc(device.name)}</h3><small>${esc(device.subtitle || device.kindLabel || "")}</small></div>
-      ${badge}</div>
+      <div class="t">
+        <div class="name-line"><h3>${esc(device.name)}</h3>
+          <button type="button" class="icon-btn" data-rename-device="${esc(device.id)}" aria-label="שינוי שם">✎</button>
+        </div>
+        <small>${esc(device.subtitle || device.kindLabel || "")}</small>
+      </div>
+      <div class="badges">${hiddenFlag}${badge}</div></div>
     <div class="body">${rows}${note}</div>
     ${switches}${dimmers}${curtain}${ac}
     ${stale}
+    <div class="card-tools">
+      <button type="button" class="icon-btn" data-hide-device="${esc(device.id)}">${device.hidden ? "הצג" : "הסתר"}</button>
+    </div>
   </article>`;
 }
 
-function toggle(deviceId, sw) {
-  return `<button type="button" class="switch ${sw.on ? "is-on" : ""}" role="switch" aria-checked="${sw.on ? "true" : "false"}" data-toggle data-device="${esc(deviceId)}" data-code="${esc(sw.code)}">
-    <span>${esc(sw.label)}</span><i aria-hidden="true"></i>
-  </button>`;
+function channelRow(deviceId, sw, showHidden) {
+  if (sw.hidden && !showHidden) return "";
+  const hideLabel = sw.hidden ? "הצג" : "הסתר";
+  return `<div class="gang-row ${sw.hidden ? "is-hidden" : ""}" data-channel="${esc(sw.code)}" ${sw.hidden ? "data-hidden-channel" : ""}>
+    <button type="button" class="switch ${sw.on ? "is-on" : ""}" role="switch" aria-checked="${sw.on ? "true" : "false"}" data-toggle data-device="${esc(deviceId)}" data-code="${esc(sw.code)}">
+      <span>${esc(sw.label)}</span>${sw.hidden ? `<em class="hidden-flag">מוסתר</em>` : ""}<i aria-hidden="true"></i>
+    </button>
+    <button type="button" class="icon-btn" data-rename-channel data-device="${esc(deviceId)}" data-code="${esc(sw.code)}" aria-label="שינוי שם">✎</button>
+    <button type="button" class="icon-btn" data-hide-channel data-device="${esc(deviceId)}" data-code="${esc(sw.code)}">${hideLabel}</button>
+  </div>`;
 }
 
-function dimmer(deviceId, d) {
+function dimmer(deviceId, d, showHidden) {
+  if (d.hidden && !showHidden) return "";
   const pct = d.percent == null ? "" : `<small>${esc(d.percent)}%</small>`;
   const range = d.brightCode
     ? `<label class="range">בהירות<input type="range" min="1" max="100" value="${esc(d.percent ?? 50)}" data-bright-range data-device="${esc(deviceId)}" data-code="${esc(d.code)}"></label>`
     : "";
-  return `${toggle(deviceId, d)}${pct ? `<div class="dim-pct">${pct}</div>` : ""}${range}`;
+  return `${channelRow(deviceId, d, true)}${pct ? `<div class="dim-pct">${pct}</div>` : ""}${range}`;
 }
 
 function curtainControls(device) {

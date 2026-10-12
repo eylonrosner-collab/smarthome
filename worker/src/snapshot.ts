@@ -1,4 +1,5 @@
 import { controllerNote, fetchHydrawise, presentZones } from "./hydrawise";
+import { applyPrefs, loadPrefs } from "./prefs";
 import { catalogItemFromDevice, deviceTitle, presentDevice } from "./present";
 import { jerusalemLabel } from "./time";
 import { TuyaClient } from "./tuya";
@@ -96,6 +97,15 @@ function namesEqual(a: string, b: string): boolean {
 }
 
 export async function buildSnapshot(env: Env, opts?: { fresh?: boolean; now?: Date; client?: TuyaClient }): Promise<Snapshot> {
+  const raw = await loadRawSnapshot(env, opts);
+  try {
+    return applyPrefs(raw, await loadPrefs(env.RULES));
+  } catch {
+    return raw;
+  }
+}
+
+async function loadRawSnapshot(env: Env, opts?: { fresh?: boolean; now?: Date; client?: TuyaClient }): Promise<Snapshot> {
   if (!opts?.fresh && memory && Date.now() - memory.at < CACHE_MS) return memory.data;
   if (!opts?.fresh) {
     try {
