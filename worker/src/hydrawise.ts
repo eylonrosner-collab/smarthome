@@ -42,31 +42,46 @@ export function hydrawiseUrl(endpoint: string, apiKey: string, params: Record<st
   return `${BASE}${endpoint}?${usp.toString()}`;
 }
 
+export class HydrawiseError extends Error {
+  constructor(
+    readonly status: number,
+    detail = "",
+  ) {
+    super(detail ? `Hydrawise HTTP ${status}: ${detail}` : `Hydrawise HTTP ${status}`);
+    this.name = "HydrawiseError";
+  }
+}
+
 async function getJson(url: string, fetchImpl: typeof fetch): Promise<unknown> {
   const res = await fetchImpl(url);
-  if (!res.ok) throw new Error(`Hydrawise HTTP ${res.status}`);
-  return res.json();
+  const text = await res.text();
+  if (!res.ok) throw new HydrawiseError(res.status, text.replace(/\s+/g, " ").trim().slice(0, 180));
+  if (!text) return {};
+  return JSON.parse(text) as unknown;
 }
 
 export async function fetchHydrawise(
   apiKey: string,
   fetchImpl: typeof fetch = fetch,
+  opts?: { controller?: boolean; knownController?: Record<string, unknown> },
 ): Promise<{ schedule: Record<string, unknown>; controller: Record<string, unknown> }> {
   const schedule = (await getJson(
     hydrawiseUrl("statusschedule.php", apiKey, {}),
     fetchImpl,
   )) as Record<string, unknown>;
-  let controller: Record<string, unknown> = {};
-  try {
-    const details = (await getJson(
-      hydrawiseUrl("customerdetails.php", apiKey, { type: "controllers" }),
-      fetchImpl,
-    )) as { controllers?: Record<string, unknown>[] };
-    const list = details.controllers || [];
-    controller =
-      list.find((c) => String(c.name || "") === "My Controller") || list[0] || {};
-  } catch {
-    controller = {};
+  let controller = opts?.knownController || {};
+  if (opts?.controller !== false) {
+    try {
+      const details = (await getJson(
+        hydrawiseUrl("customerdetails.php", apiKey, { type: "controllers" }),
+        fetchImpl,
+      )) as { controllers?: Record<string, unknown>[] };
+      const list = details.controllers || [];
+      const found = list.find((c) => String(c.name || "") === "My Controller") || list[0];
+      if (found) controller = found;
+    } catch {
+      /* keep the controller we already know */
+    }
   }
   return { schedule, controller };
 }

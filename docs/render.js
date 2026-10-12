@@ -89,6 +89,7 @@ function renderZone(zone) {
       ${row(zone.running ? "סטטוס" : "הפעלה הבאה", zone.nextLabel, true)}
       ${row("משך", zone.durationLabel)}
       ${row("מחזור", zone.periodLabel)}
+      ${zone.staleLabel ? `<p class="stale">${esc(zone.staleLabel)}</p>` : ""}
     </div>
     ${controls}
   </article>`;

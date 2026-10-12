@@ -6,9 +6,9 @@ import { executeSavedRule, runScheduler } from "./scheduler";
 import { loadPrefs, readPrefPatch, updateChannelPref, updateDevicePref } from "./prefs";
 import { buildSnapshot, invalidateSnapshot } from "./snapshot";
 import { appendActivity, loadActivity, loadRules, saveRules } from "./store";
-import { TuyaClient } from "./tuya";
+import { TuyaClient, tuyaUserMessage } from "./tuya";
 import type { Env, Snapshot } from "./types";
-import { sendZone } from "./hydrawise";
+import { recordZoneCommand } from "./hydro-cache";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -106,10 +106,11 @@ async function deviceCommands(request: Request, env: Env, id: string): Promise<R
   }
   const client = tuya(env);
   const result = await client.sendCommands(id, commands);
-  invalidateSnapshot();
+  await invalidateSnapshot(env.RULES);
   const ok = Boolean(result.success);
-  await appendActivity(env.RULES, { ok, message: ok ? `פקודה ל-${id}` : `נכשלה פקודה ל-${id}: ${result.msg || ""}` });
-  if (!ok) return json({ error: result.msg || "Tuya דחה את הפקודה" }, 502, request, env);
+  const failure = tuyaUserMessage(result.msg);
+  await appendActivity(env.RULES, { ok, message: ok ? `פקודה ל-${id}` : `נכשלה פקודה ל-${id}: ${failure}` });
+  if (!ok) return json({ error: failure }, 502, request, env);
   return json({ ok: true }, 200, request, env);
 }
 
@@ -129,19 +130,20 @@ async function acCommand(request: Request, env: Env, id: string): Promise<Respon
     return json({ error: "לא נמצא שלט IR למזגן הזה. ודאו ששירות IR Control Hub פעיל בפרויקט Tuya." }, 400, request, env);
   }
   const result = await tuya(env).sendAcCommand(infraredId, remoteId, ac);
-  invalidateSnapshot();
+  await invalidateSnapshot(env.RULES);
   const ok = Boolean(result.success);
+  const failure = tuyaUserMessage(result.msg);
   await appendActivity(env.RULES, {
     ok,
-    message: ok ? `${device?.name || "מזגן"}: ${ac.power ? "דולק" : "כבוי"} ${ac.temp}°` : `מזגן נכשל: ${result.msg || ""}`,
+    message: ok ? `${device?.name || "מזגן"}: ${ac.power ? "דולק" : "כבוי"} ${ac.temp}°` : `מזגן נכשל: ${failure}`,
   });
-  if (!ok) return json({ error: result.msg || "Tuya דחה את פקודת המזגן" }, 502, request, env);
+  if (!ok) return json({ error: failure }, 502, request, env);
   return json({ ok: true }, 200, request, env);
 }
 
 async function zoneCommand(request: Request, env: Env, relayId: number, action: string): Promise<Response> {
   const body = await readJson(request);
-  const snap = await buildSnapshot(env, { fresh: true });
+  const snap = await buildSnapshot(env);
   const zone = snap.sections.flatMap((s) => s.zones).find((z) => z.relayId === relayId);
   if (!zone) return json({ error: "אזור ההשקיה לא נמצא" }, 404, request, env);
   const minutes = clamp(Number(body.minutes ?? 10), 1, 180);
@@ -149,13 +151,13 @@ async function zoneCommand(request: Request, env: Env, relayId: number, action: 
   const now = Math.floor(Date.now() / 1000);
   const kind = action === "run" || action === "stop" || action === "suspend" || action === "resume" ? action : "";
   if (!kind) return json({ error: "פעולה לא נתמכת" }, 400, request, env);
-  const result = await sendZone(env.HYDRAWISE_API_KEY, {
+  const result = await recordZoneCommand(env.RULES, env.HYDRAWISE_API_KEY, {
     action: kind,
     relayId,
     runSeconds: kind === "run" ? minutes * 60 : undefined,
     suspendUntilEpoch: kind === "suspend" ? now + hours * 3600 : undefined,
-  });
-  invalidateSnapshot();
+  }, Date.now());
+  await invalidateSnapshot(env.RULES);
   const ok = result.message_type !== "error";
   const verb = kind === "run" ? `השקיה ${minutes} דק׳` : kind === "stop" ? "עצירה" : kind === "resume" ? "חידוש" : `השהיה ${hours} שע׳`;
   await appendActivity(env.RULES, { ok, message: `${zone.name}: ${ok ? verb : result.message || "נכשל"}` });
@@ -231,7 +233,7 @@ async function runRule(env: Env, request: Request, id: string): Promise<Response
   const snap = await buildSnapshot(env, { fresh: true });
   const result = await executeSavedRule(env, rule, snap, false);
   await appendActivity(env.RULES, { ok: result.ok, message: result.message, ruleId: rule.id, ruleName: rule.name });
-  invalidateSnapshot();
+  await invalidateSnapshot(env.RULES);
   return json(result, result.ok ? 200 : 502, request, env);
 }
 

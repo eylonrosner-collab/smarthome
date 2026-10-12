@@ -50,6 +50,15 @@ test("hidden devices and gangs stay off the dashboard until הצג מוסתרי�
   assert.doesNotMatch(shown, /תאורת חוץ/);
 });
 
+test("stale irrigation zones stay on the dashboard", () => {
+  const snap = structuredClone(mockSnapshot);
+  const garden = snap.sections.find((s: { id: string }) => s.id === "garden") as { zones: { staleLabel?: string }[] };
+  garden.zones[0].staleLabel = "נתונים ישנים · 16:56";
+  const html = renderHome(snap, []);
+  assert.match(html, /Back Lawn/);
+  assert.match(html, /נתונים ישנים · 16:56/);
+});
+
 test("device names are escaped", () => {
   const snap = structuredClone(mockSnapshot);
   snap.sections[0].devices[0].name = `<img src=x onerror=alert(1)>`;
@@ -86,6 +95,9 @@ test("the static page is Hebrew, RTL, and relative to the project site", () => {
   assert.match(html, /src="\.\/app\.js(\?[^"]*)?"/);
   assert.match(html, /href="\.\/styles\.css"/);
   assert.match(html, /הצג מוסתרים/);
+  const app = readFileSync(new URL("../../docs/app.js", import.meta.url), "utf8");
+  assert.match(app, /60_000\)/);
+  assert.doesNotMatch(app, /, 30000\)/);
   const config = readFileSync(new URL("../../docs/config.js", import.meta.url), "utf8");
   assert.match(config, /https:\/\/smarthome\.eylonrosner\.workers\.dev/);
   assert.doesNotMatch(config, /YOUR-SUBDOMAIN|ACCESS_SECRET|HYDRAWISE|DASH_PASSWORD|api_key/i);
