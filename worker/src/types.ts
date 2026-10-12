@@ -2,7 +2,7 @@ export type SectionId = "garden" | "climate" | "lights" | "curtains" | "power" |
 
 export type Row = { label: string; value: string };
 
-export type SwitchControl = { code: string; label: string; on: boolean };
+export type SwitchControl = { code: string; label: string; on: boolean; hidden?: boolean };
 
 export type DimmerControl = {
   code: string;
@@ -10,6 +10,7 @@ export type DimmerControl = {
   on: boolean;
   percent?: number;
   brightCode?: string;
+  hidden?: boolean;
 };
 
 export type CurtainView = {
@@ -52,6 +53,7 @@ export type DeviceView = {
   metrics?: MetricView;
   readOnlyNote?: string;
   soil?: boolean;
+  hidden?: boolean;
 };
 
 export type ZoneView = {

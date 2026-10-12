@@ -22,6 +22,34 @@ test("the dashboard renders the Hebrew groups, controls and soil sensor", () => 
   assert.match(html, /data-curtain="stop"/);
 });
 
+test("hidden devices and gangs stay off the dashboard until הצג מוסתרים", () => {
+  const snap = structuredClone(mockSnapshot);
+  const lights = snap.sections.find((s: { id: string }) => s.id === "lights") as {
+    devices: { id: string; name: string; hidden?: boolean; switches: { code: string; label: string; hidden?: boolean }[] }[];
+  };
+  const entrance = lights.devices.find((d) => d.id === "dev-entrance")!;
+  entrance.switches[0].hidden = true;
+  entrance.switches[0].label = "פנס כניסה";
+  const guest = lights.devices.find((d) => d.id === "dev-guest")!;
+  guest.hidden = true;
+  guest.name = "שירותים קטנים";
+  const hidden = renderHome(snap, []);
+  assert.match(hidden, /סגירה כללית/);
+  assert.doesNotMatch(hidden, /פנס כניסה/);
+  assert.doesNotMatch(hidden, /תאורת חוץ/);
+  assert.doesNotMatch(hidden, /שירותי אורחים/);
+  assert.doesNotMatch(hidden, /שירותים קטנים/);
+  const shown = renderHome(snap, [], { showHidden: true });
+  assert.match(shown, /פנס כניסה/);
+  assert.match(shown, /שירותים קטנים/);
+  assert.match(shown, /מוסתר/);
+  assert.match(shown, /data-hidden-device/);
+  assert.match(shown, /data-hidden-channel/);
+  assert.match(shown, /data-hide-device="dev-guest"/);
+  assert.doesNotMatch(shown, /שירותי אורחים/);
+  assert.doesNotMatch(shown, /תאורת חוץ/);
+});
+
 test("device names are escaped", () => {
   const snap = structuredClone(mockSnapshot);
   snap.sections[0].devices[0].name = `<img src=x onerror=alert(1)>`;
@@ -57,6 +85,7 @@ test("the static page is Hebrew, RTL, and relative to the project site", () => {
   assert.match(html, /<html lang="he" dir="rtl">/);
   assert.match(html, /src="\.\/app\.js(\?[^"]*)?"/);
   assert.match(html, /href="\.\/styles\.css"/);
+  assert.match(html, /הצג מוסתרים/);
   const config = readFileSync(new URL("../../docs/config.js", import.meta.url), "utf8");
   assert.match(config, /https:\/\/smarthome\.eylonrosner\.workers\.dev/);
   assert.doesNotMatch(config, /YOUR-SUBDOMAIN|ACCESS_SECRET|HYDRAWISE|DASH_PASSWORD|api_key/i);

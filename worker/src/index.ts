@@ -3,6 +3,7 @@ import { passwordFromRequest, passwordsMatch } from "./auth";
 import { validateAcBody, validateCommands } from "./execute";
 import { assertSavable, interpretRule, normalizeDraft, type Draft, type Rule } from "./rules";
 import { executeSavedRule, runScheduler } from "./scheduler";
+import { loadPrefs, readPrefPatch, updateChannelPref, updateDevicePref } from "./prefs";
 import { buildSnapshot, invalidateSnapshot } from "./snapshot";
 import { appendActivity, loadActivity, loadRules, saveRules } from "./store";
 import { TuyaClient } from "./tuya";
@@ -63,6 +64,12 @@ export async function handle(request: Request, env: Env): Promise<Response> {
         return runRule(env, request, decodeURIComponent(match.params.id));
       case "activity":
         return json({ events: await loadActivity(env.RULES) }, 200, request, env);
+      case "prefs":
+        return json(await loadPrefs(env.RULES), 200, request, env);
+      case "prefDevice":
+        return await putPref(request, env, (patch) => updateDevicePref(env.RULES, decodeURIComponent(match.params.id), patch));
+      case "prefChannel":
+        return await putPref(request, env, (patch) => updateChannelPref(env.RULES, decodeURIComponent(match.params.id), decodeURIComponent(match.params.code), patch));
       default:
         return json({ error: "לא נמצא" }, 404, request, env);
     }
@@ -154,6 +161,14 @@ async function zoneCommand(request: Request, env: Env, relayId: number, action: 
   await appendActivity(env.RULES, { ok, message: `${zone.name}: ${ok ? verb : result.message || "נכשל"}` });
   if (!ok) return json({ error: result.message || "Hydrawise דחה את הפקודה" }, 502, request, env);
   return json({ ok: true, message: result.message || verb }, 200, request, env);
+}
+
+async function putPref(request: Request, env: Env, save: (patch: { hidden?: boolean; name?: string | null }) => Promise<unknown>): Promise<Response> {
+  const body = await readJson(request);
+  const parsed = readPrefPatch(body);
+  if (!parsed.patch) return json({ error: parsed.error || "אין מה לעדכן" }, 400, request, env);
+  const prefs = await save(parsed.patch);
+  return json(prefs, 200, request, env);
 }
 
 async function previewRule(request: Request, env: Env): Promise<Response> {
@@ -286,6 +301,9 @@ function matchRoute(method: string, pathname: string): { name: string; params: R
     { method: "DELETE", re: /^\/api\/rules\/([^/]+)$/, name: "deleteRule", keys: ["id"] },
     { method: "POST", re: /^\/api\/rules\/([^/]+)\/run$/, name: "runRule", keys: ["id"] },
     { method: "GET", re: /^\/api\/activity$/, name: "activity", keys: [] },
+    { method: "GET", re: /^\/api\/prefs$/, name: "prefs", keys: [] },
+    { method: "PUT", re: /^\/api\/prefs\/devices\/([^/]+)\/channels\/([^/]+)$/, name: "prefChannel", keys: ["id", "code"] },
+    { method: "PUT", re: /^\/api\/prefs\/devices\/([^/]+)$/, name: "prefDevice", keys: ["id"] },
   ];
   for (const route of routes) {
     if (route.method !== method) continue;

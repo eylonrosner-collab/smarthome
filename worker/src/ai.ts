@@ -3,6 +3,7 @@ import { extractJsonObject } from "./json";
 
 export const RULE_SYSTEM_PROMPT = `You translate a smart-home request into ONE JSON object and nothing else.
 The user writes in Hebrew or English. Use only devices and zones from the catalog (copy ids and names exactly).
+Catalog names and switch labels are the display names the user chose. Match those names.
 Times are Asia/Jerusalem, 24-hour HH:MM. Weekdays: 0=Sunday ... 6=Saturday. Omit days for every day.
 Schema:
 {

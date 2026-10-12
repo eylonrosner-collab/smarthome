@@ -17,9 +17,14 @@ const state = {
   tab: location.hash.replace("#", "") || "home",
   preview: null,
   editingId: null,
+  showHidden: readShowHidden(),
 };
 
 const $ = (id) => document.getElementById(id);
+
+function readShowHidden() {
+  try { return localStorage.getItem("smarthome.showHidden") === "1"; } catch { return false; }
+}
 
 function workerReady() {
   return /^https:\/\//.test(WORKER_URL) && !WORKER_URL.includes("YOUR-SUBDOMAIN");
@@ -65,8 +70,14 @@ function toast(message) {
 function paint() {
   const y = window.scrollY;
   $("meta").textContent = state.mock ? `הדגמה · ${state.snapshot.updatedLabel}` : state.snapshot?.updatedLabel || "";
-  $("kpis").innerHTML = state.snapshot ? renderKpis(state.snapshot) : "";
-  $("view-home").innerHTML = state.snapshot ? renderHome(state.snapshot, state.rules) : "";
+  const view = { showHidden: state.showHidden };
+  $("kpis").innerHTML = state.snapshot ? renderKpis(state.snapshot, view) : "";
+  $("view-home").innerHTML = state.snapshot ? renderHome(state.snapshot, state.rules, view) : "";
+  const hiddenBtn = $("show-hidden");
+  if (hiddenBtn) {
+    hiddenBtn.setAttribute("aria-pressed", state.showHidden ? "true" : "false");
+    hiddenBtn.classList.toggle("is-on", state.showHidden);
+  }
   $("rule-list").innerHTML = renderRuleList(state.rules);
   $("preview").innerHTML = renderPreview(state.preview);
   $("view-log").innerHTML = renderActivity(state.events);
@@ -230,6 +241,11 @@ async function runRule(id) {
 
 function wire() {
   $("examples").innerHTML = EXAMPLES.map((ex) => `<button type="button" data-example="${ex}">${ex}</button>`).join("");
+  $("show-hidden").addEventListener("click", () => {
+    state.showHidden = !state.showHidden;
+    try { localStorage.setItem("smarthome.showHidden", state.showHidden ? "1" : "0"); } catch { /* private mode */ }
+    paint();
+  });
   $("demo-btn").addEventListener("click", () => {
     try {
       enterMock();
@@ -359,7 +375,106 @@ function wire() {
   }, 30000);
 }
 
+function openRename(slot, value, commit) {
+  const input = document.createElement("input");
+  input.className = "rename-input";
+  input.value = value;
+  input.maxLength = 40;
+  input.enterKeyHint = "done";
+  input.setAttribute("aria-label", "שם חדש");
+  slot.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    if (!save) {
+      paint();
+      return;
+    }
+    commit(input.value.replace(/\s+/g, " ").trim());
+  };
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      finish(true);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      finish(false);
+    }
+  });
+  input.addEventListener("blur", () => finish(true));
+}
+
+async function savePref(path, body, apply) {
+  apply();
+  paint();
+  if (state.mock) {
+    toast("עודכן בתצוגת ההדגמה");
+    return;
+  }
+  try {
+    await api(path, { method: "PUT", body });
+    toast("נשמר");
+  } catch (err) {
+    toast(err.message || "השמירה נכשלה");
+    await refresh(false);
+  }
+}
+
 async function onAction(event) {
+  if (event.target.closest("input, textarea, select")) return;
+  const renameDevice = event.target.closest("[data-rename-device]");
+  if (renameDevice) {
+    const device = findDevice(renameDevice.dataset.renameDevice);
+    if (!device) return;
+    const title = renameDevice.closest(".name-line")?.querySelector("h3");
+    if (!title) return;
+    openRename(title, device.name, (name) => savePref(
+      `/api/prefs/devices/${encodeURIComponent(device.id)}`,
+      { name },
+      () => { if (name) device.name = name; },
+    ).then(() => { if (!name && !state.mock) return refresh(false); if (!name) paint(); }));
+    return;
+  }
+
+  const renameChannel = event.target.closest("[data-rename-channel]");
+  if (renameChannel) {
+    const device = findDevice(renameChannel.dataset.device);
+    const sw = device && [...device.switches, ...device.dimmers].find((s) => s.code === renameChannel.dataset.code);
+    if (!sw) return;
+    openRename(renameChannel, sw.label, (name) => savePref(
+      `/api/prefs/devices/${encodeURIComponent(device.id)}/channels/${encodeURIComponent(sw.code)}`,
+      { name },
+      () => { if (name) sw.label = name; },
+    ).then(() => { if (!name && !state.mock) return refresh(false); if (!name) paint(); }));
+    return;
+  }
+
+  const hideDevice = event.target.closest("[data-hide-device]");
+  if (hideDevice) {
+    const device = findDevice(hideDevice.dataset.hideDevice);
+    if (!device) return;
+    const hidden = !device.hidden;
+    await savePref(`/api/prefs/devices/${encodeURIComponent(device.id)}`, { hidden }, () => { device.hidden = hidden; });
+    return;
+  }
+
+  const hideChannel = event.target.closest("[data-hide-channel]");
+  if (hideChannel) {
+    const device = findDevice(hideChannel.dataset.device);
+    const sw = device && [...device.switches, ...device.dimmers].find((s) => s.code === hideChannel.dataset.code);
+    if (!sw) return;
+    const hidden = !sw.hidden;
+    await savePref(
+      `/api/prefs/devices/${encodeURIComponent(device.id)}/channels/${encodeURIComponent(sw.code)}`,
+      { hidden },
+      () => { sw.hidden = hidden; },
+    );
+    return;
+  }
+
   const toggle = event.target.closest("[data-toggle]");
   if (toggle) {
     const device = findDevice(toggle.dataset.device);
