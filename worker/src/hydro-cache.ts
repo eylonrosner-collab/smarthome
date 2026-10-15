@@ -1,3 +1,4 @@
+import { productionEphemeral, type Ephemeral } from "./ephemeral";
 import { fetchHydrawise, presentZones, sendZone, type ZoneAction } from "./hydrawise";
 import { jerusalemParts, pad2 } from "./time";
 import type { ZoneView } from "./types";
@@ -6,6 +7,7 @@ import type { ZoneView } from "./types";
 export const MIN_STATUS_MS = 60_000;
 const MAX_STATUS_MS = 10 * 60_000;
 const CONTROLLER_MS = 10 * 60_000;
+const KEEP_SEC = 6 * 60 * 60;
 const KEY = "hydrawise_status";
 
 export const HYDRO_UNAVAILABLE = "Hydrawise לא זמין כרגע, ואזורי ההשקיה יופיעו שוב אחרי חיבור מוצלח.";
@@ -20,7 +22,7 @@ export type HydroCache = {
   error?: string;
 };
 
-type Kv = Pick<KVNamespace, "get" | "put">;
+const flights = new WeakMap<Ephemeral, Promise<HydroCache>>();
 
 export function nextStatusAt(nowMs: number, nextpoll: unknown): number {
   const floor = nowMs + MIN_STATUS_MS;
@@ -36,11 +38,10 @@ function emptyCache(): HydroCache {
   return { fetchedAt: 0, nextPollAt: 0, schedule: null, controller: {}, controllerAt: 0, stale: false };
 }
 
-async function readCache(kv: Kv): Promise<HydroCache> {
+async function readCache(store: Ephemeral): Promise<HydroCache> {
   try {
-    const raw = await kv.get(KEY, "json");
-    if (!raw || typeof raw !== "object") return emptyCache();
-    const src = raw as Partial<HydroCache>;
+    const src = await store.get<Partial<HydroCache>>(KEY);
+    if (!src || typeof src !== "object") return emptyCache();
     return {
       fetchedAt: Number(src.fetchedAt) || 0,
       nextPollAt: Number(src.nextPollAt) || 0,
@@ -55,59 +56,87 @@ async function readCache(kv: Kv): Promise<HydroCache> {
   }
 }
 
-async function writeCache(kv: Kv, cache: HydroCache): Promise<void> {
+async function writeCache(store: Ephemeral, cache: HydroCache): Promise<void> {
   try {
-    await kv.put(KEY, JSON.stringify(cache));
+    await store.put(KEY, cache, KEEP_SEC);
   } catch {
     /* a missed write only risks one extra poll */
   }
 }
 
 /**
- * Seconds-or-timestamp `nextpoll` from Hydrawise, but never sooner than MIN_STATUS_MS.
- * There is no force flag: fresh=1 must not bypass this.
+ * Never sooner than MIN_STATUS_MS, and longer when Hydrawise sends nextpoll.
+ * There is no force flag: fresh=1 must not bypass this. The timestamp lives in
+ * the Cache API, not KV.
  */
 export async function readHydrawise(
-  kv: Kv,
   apiKey: string,
   nowMs: number,
   fetchImpl: typeof fetch = fetch,
+  store: Ephemeral = productionEphemeral,
 ): Promise<HydroCache> {
-  const cache = await readCache(kv);
+  const cache = await readCache(store);
+  if (!apiKey) {
+    if (nowMs < cache.nextPollAt) return cache;
+    const saved: HydroCache = {
+      ...cache,
+      nextPollAt: nowMs + MIN_STATUS_MS,
+      stale: Boolean(cache.schedule),
+      error: cache.error || "missing api key",
+    };
+    await writeCache(store, saved);
+    return saved;
+  }
   if (nowMs < cache.nextPollAt) return cache;
-  return refreshStatus(kv, apiKey, cache, nowMs, fetchImpl);
+  return refreshOnce(store, apiKey, cache, nowMs, fetchImpl);
 }
 
 export async function recordZoneCommand(
-  kv: Kv,
   apiKey: string,
   input: { action: ZoneAction; relayId: number; runSeconds?: number; suspendUntilEpoch?: number },
   nowMs: number,
   fetchImpl: typeof fetch = fetch,
+  store: Ephemeral = productionEphemeral,
 ): Promise<{ message?: string; message_type?: string }> {
   const result = await sendZone(apiKey, input, fetchImpl);
-  let cache = await readCache(kv);
+  let cache = await readCache(store);
   if (result.message_type !== "error" && cache.schedule) patchRelay(cache.schedule, input);
   if (!cache.schedule || nowMs >= cache.nextPollAt) {
-    cache = await refreshStatus(kv, apiKey, cache, nowMs, fetchImpl);
+    cache = await refreshOnce(store, apiKey, cache, nowMs, fetchImpl);
     if (result.message_type !== "error" && cache.schedule) patchRelay(cache.schedule, input);
-    if (result.message_type !== "error") await writeCache(kv, cache);
+    if (result.message_type !== "error") await writeCache(store, cache);
     return result;
   }
   cache.nextPollAt = Math.max(cache.nextPollAt, nowMs + MIN_STATUS_MS);
-  await writeCache(kv, cache);
+  await writeCache(store, cache);
   return result;
 }
 
+function refreshOnce(
+  store: Ephemeral,
+  apiKey: string,
+  cache: HydroCache,
+  nowMs: number,
+  fetchImpl: typeof fetch,
+): Promise<HydroCache> {
+  const existing = flights.get(store);
+  if (existing) return existing;
+  const job = refreshStatus(store, apiKey, cache, nowMs, fetchImpl).finally(() => {
+    if (flights.get(store) === job) flights.delete(store);
+  });
+  flights.set(store, job);
+  return job;
+}
+
 async function refreshStatus(
-  kv: Kv,
+  store: Ephemeral,
   apiKey: string,
   cache: HydroCache,
   nowMs: number,
   fetchImpl: typeof fetch,
 ): Promise<HydroCache> {
   const claimed: HydroCache = { ...cache, nextPollAt: nowMs + MIN_STATUS_MS };
-  await writeCache(kv, claimed);
+  await writeCache(store, claimed);
   try {
     const wantController = nowMs - cache.controllerAt >= CONTROLLER_MS;
     const { schedule, controller } = await fetchHydrawise(apiKey, fetchImpl, {
@@ -122,7 +151,7 @@ async function refreshStatus(
       controllerAt: wantController ? nowMs : cache.controllerAt,
       stale: false,
     };
-    await writeCache(kv, saved);
+    await writeCache(store, saved);
     return saved;
   } catch (err) {
     const saved: HydroCache = {
@@ -131,7 +160,7 @@ async function refreshStatus(
       stale: Boolean(cache.schedule),
       error: err instanceof Error ? err.message : "Hydrawise",
     };
-    await writeCache(kv, saved);
+    await writeCache(store, saved);
     return saved;
   }
 }

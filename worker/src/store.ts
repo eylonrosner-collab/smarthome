@@ -1,3 +1,4 @@
+import { readThrough, remember } from "./ephemeral";
 import type { Rule } from "./rules";
 
 export type ActivityEvent = {
@@ -14,17 +15,28 @@ const ACTIVITY_KEY = "activity";
 const MAX_ACTIVITY = 80;
 
 export async function loadRules(kv: KVNamespace): Promise<Rule[]> {
-  const raw = await kv.get(RULES_KEY, "json");
-  return Array.isArray(raw) ? (raw as Rule[]) : [];
+  return readThrough(RULES_KEY, async () => {
+    const raw = await kv.get(RULES_KEY, "json");
+    return Array.isArray(raw) ? (raw as Rule[]) : [];
+  });
 }
 
 export async function saveRules(kv: KVNamespace, rules: Rule[]): Promise<void> {
-  await kv.put(RULES_KEY, JSON.stringify(rules));
+  const body = JSON.stringify(rules);
+  const prev = await kv.get(RULES_KEY, "text");
+  if (prev === body) {
+    await remember(RULES_KEY, rules);
+    return;
+  }
+  await kv.put(RULES_KEY, body);
+  await remember(RULES_KEY, rules);
 }
 
 export async function loadActivity(kv: KVNamespace): Promise<ActivityEvent[]> {
-  const raw = await kv.get(ACTIVITY_KEY, "json");
-  return Array.isArray(raw) ? (raw as ActivityEvent[]) : [];
+  return readThrough(ACTIVITY_KEY, async () => {
+    const raw = await kv.get(ACTIVITY_KEY, "json");
+    return Array.isArray(raw) ? (raw as ActivityEvent[]) : [];
+  });
 }
 
 export async function appendActivity(kv: KVNamespace, event: Omit<ActivityEvent, "id" | "at"> & { at?: string }): Promise<ActivityEvent> {
@@ -38,6 +50,8 @@ export async function appendActivity(kv: KVNamespace, event: Omit<ActivityEvent,
     ruleName: event.ruleName,
   };
   list.unshift(saved);
-  await kv.put(ACTIVITY_KEY, JSON.stringify(list.slice(0, MAX_ACTIVITY)));
+  const next = list.slice(0, MAX_ACTIVITY);
+  await kv.put(ACTIVITY_KEY, JSON.stringify(next));
+  await remember(ACTIVITY_KEY, next);
   return saved;
 }

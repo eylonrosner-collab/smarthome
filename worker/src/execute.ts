@@ -102,7 +102,7 @@ export async function runPlanned(env: Env, planned: Planned[], client?: TuyaClie
     try {
       if (step.type === "zone") {
         const now = Math.floor(Date.now() / 1000);
-        const result = await recordZoneCommand(env.RULES, env.HYDRAWISE_API_KEY, {
+        const result = await recordZoneCommand(env.HYDRAWISE_API_KEY, {
           action: step.command,
           relayId: step.relayId,
           runSeconds: step.command === "run" ? Math.round((step.minutes || 10) * 60) : undefined,
