@@ -106,7 +106,7 @@ async function deviceCommands(request: Request, env: Env, id: string): Promise<R
   }
   const client = tuya(env);
   const result = await client.sendCommands(id, commands);
-  await invalidateSnapshot(env.RULES);
+  invalidateSnapshot();
   const ok = Boolean(result.success);
   const failure = tuyaUserMessage(result.msg);
   await appendActivity(env.RULES, { ok, message: ok ? `פקודה ל-${id}` : `נכשלה פקודה ל-${id}: ${failure}` });
@@ -130,7 +130,7 @@ async function acCommand(request: Request, env: Env, id: string): Promise<Respon
     return json({ error: "לא נמצא שלט IR למזגן הזה. ודאו ששירות IR Control Hub פעיל בפרויקט Tuya." }, 400, request, env);
   }
   const result = await tuya(env).sendAcCommand(infraredId, remoteId, ac);
-  await invalidateSnapshot(env.RULES);
+  invalidateSnapshot();
   const ok = Boolean(result.success);
   const failure = tuyaUserMessage(result.msg);
   await appendActivity(env.RULES, {
@@ -151,13 +151,13 @@ async function zoneCommand(request: Request, env: Env, relayId: number, action: 
   const now = Math.floor(Date.now() / 1000);
   const kind = action === "run" || action === "stop" || action === "suspend" || action === "resume" ? action : "";
   if (!kind) return json({ error: "פעולה לא נתמכת" }, 400, request, env);
-  const result = await recordZoneCommand(env.RULES, env.HYDRAWISE_API_KEY, {
+  const result = await recordZoneCommand(env.HYDRAWISE_API_KEY, {
     action: kind,
     relayId,
     runSeconds: kind === "run" ? minutes * 60 : undefined,
     suspendUntilEpoch: kind === "suspend" ? now + hours * 3600 : undefined,
   }, Date.now());
-  await invalidateSnapshot(env.RULES);
+  invalidateSnapshot();
   const ok = result.message_type !== "error";
   const verb = kind === "run" ? `השקיה ${minutes} דק׳` : kind === "stop" ? "עצירה" : kind === "resume" ? "חידוש" : `השהיה ${hours} שע׳`;
   await appendActivity(env.RULES, { ok, message: `${zone.name}: ${ok ? verb : result.message || "נכשל"}` });
@@ -233,7 +233,7 @@ async function runRule(env: Env, request: Request, id: string): Promise<Response
   const snap = await buildSnapshot(env, { fresh: true });
   const result = await executeSavedRule(env, rule, snap, false);
   await appendActivity(env.RULES, { ok: result.ok, message: result.message, ruleId: rule.id, ruleName: rule.name });
-  await invalidateSnapshot(env.RULES);
+  invalidateSnapshot();
   return json(result, result.ok ? 200 : 502, request, env);
 }
 

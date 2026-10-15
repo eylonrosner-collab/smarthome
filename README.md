@@ -10,7 +10,7 @@
 2. מזינים את הסיסמה פעם אחת. היא נשמרת רק בדפדפן (`localStorage`), לא באתר.
 3. בכרטיס של כל מכשיר: הדלקה וכיבוי של כל מתג, פתיחה/סגירה/עצירה/מיקום לתריס, הפעלה/מצב/טמפרטורה למזגן, והשקיה/עצירה/השהיה לאזור. «שינוי שם» (העיפרון) ו«הסתר» זמינים לכל מכשיר ולכל מתג. מה שמוסתר נעלם מהלוח; «הצג מוסתרים» מחזיר אותו עם סימון ואפשרות להציג שוב. השם שנבחר מחליף את שם ה-Tuya גם בלוח וגם כשכותבים תרחיש, ונשמר בשרת כדי שיהיה זהה בטלפון ובמחשב.
 4. בלשונית **תרחישים** כותבים משפט בעברית או באנגלית. המערכת מציגה בעברית מה היא הבינה, ורק אחרי אישור התרחיש נשמר.
-5. בלשונית **יומן** רואים מה רץ לאחרונה. בדיקה אוטומטית רצה כל חמש דקות לפי שעון ישראל. הלוח מתרענן בערך פעם בדקה. אם Hydrawise עמוס, אזורי ההשקיה נשארים על המסך עם הסימון «נתונים ישנים» והשעה האחרונה שבה הם עודכנו.
+5. בלשונית **יומן** רואים מה רץ לאחרונה. בדיקה אוטומטית רצה כל חמש דקות לפי שעון ישראל, ונרשמת ביומן רק כשתרחיש באמת רץ. הלוח מתרענן בערך פעם בדקה. אם Hydrawise עמוס, אזורי ההשקיה נשארים על המסך עם הסימון «נתונים ישנים» והשעה האחרונה שבה הם עודכנו.
 
 דוגמאות:
 
@@ -31,11 +31,12 @@
 | `docs/` | Static Hebrew UI. GitHub Pages serves it at `/smarthome/`. |
 | `docs/config.js` | The only site setting: the public Worker URL. |
 | `worker/` | Cloudflare Worker. Holds `TUYA_ACCESS_ID`, `TUYA_ACCESS_SECRET`, `HYDRAWISE_API_KEY`, and `DASH_PASSWORD`. |
-| Workers KV `RULES` | Saved scenarios and the activity log. |
-| Workers KV `prefs` | Per-device and per-gang hide flags and display names. The dashboard and scenario parser use the display name. |
+| Workers KV `RULES` | Only durable data: scenarios, hide/rename prefs, and the activity log. A write happens when one of those actually changes. |
+| Status cache | Hydrawise and Tuya status, plus the rate-limit timestamp, live in memory and the Cache API. Not in KV. `statusschedule.php` at most about once a minute (or longer when `nextpoll` is set), including `fresh=1`. A 429 keeps the last zones. |
 | Workers AI | Turns a free-text scenario into a JSON rule. Model: `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. |
-| Cron `*/5 * * * *` | Evaluates enabled rules in `Asia/Jerusalem`. |
-| Hydrawise cache | `statusschedule.php` at most once a minute (or longer when the response includes `nextpoll`). A 429 keeps the last zones. |
+| Cron `*/5 * * * *` | Evaluates enabled rules in `Asia/Jerusalem`. A tick where nothing fires does not write to KV. |
+
+The Workers free plan allows 1,000 KV writes per day. Status polling does not use that budget. A quiet day — dashboard left open, cron running, no commands and no scenario firing — writes zero times. Each command or rename is one write, and a scenario that fires adds one activity line plus one rules write for that tick. Ordinary use stays under about 30 writes a day. Reads of rules, names, and the log come from memory or the Cache API after the first load, so a warm worker does not re-read KV on every poll.
 
 The browser sends `Authorization: Bearer <password>`. CORS allows only `https://eylonrosner-collab.github.io`.
 

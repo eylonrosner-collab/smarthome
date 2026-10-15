@@ -11,15 +11,10 @@ export async function runScheduler(env: Env, now = new Date()): Promise<void> {
   let snap;
   try {
     snap = await buildSnapshot(env, { fresh: true, now });
-  } catch (err) {
-    await appendActivity(env.RULES, {
-      ok: false,
-      message: `בדיקת תרחישים נכשלה: ${err instanceof Error ? err.message : "שגיאה"}`,
-    });
+  } catch {
+    // A snapshot failure is visible on the next dashboard load. Logging it here
+    // would write KV on every quiet tick.
     return;
-  }
-  if (snap.errors.length) {
-    await appendActivity(env.RULES, { ok: false, message: `קריאת מצב חלקית: ${snap.errors.join(" · ")}` });
   }
   const world = worldFromSnapshot(snap, now);
   let changed = false;

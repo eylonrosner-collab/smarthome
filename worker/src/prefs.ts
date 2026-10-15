@@ -1,3 +1,4 @@
+import { readThrough, remember } from "./ephemeral";
 import { catalogItemFromDevice } from "./present";
 import type { DeviceView, Snapshot } from "./types";
 
@@ -23,12 +24,19 @@ export function channelKey(deviceId: string, code: string): string {
 }
 
 export async function loadPrefs(kv: KVNamespace): Promise<Prefs> {
-  const raw = await kv.get(PREFS_KEY, "json");
-  return normalizePrefs(raw);
+  return readThrough(PREFS_KEY, async () => normalizePrefs(await kv.get(PREFS_KEY, "json")));
 }
 
 export async function savePrefs(kv: KVNamespace, prefs: Prefs): Promise<void> {
-  await kv.put(PREFS_KEY, JSON.stringify(normalizePrefs(prefs)));
+  const normalized = normalizePrefs(prefs);
+  const body = JSON.stringify(normalized);
+  const prev = await kv.get(PREFS_KEY, "text");
+  if (prev === body) {
+    await remember(PREFS_KEY, normalized);
+    return;
+  }
+  await kv.put(PREFS_KEY, body);
+  await remember(PREFS_KEY, normalized);
 }
 
 export function normalizePrefs(raw: unknown): Prefs {

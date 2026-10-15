@@ -1,3 +1,4 @@
+import { productionEphemeral } from "./ephemeral";
 import { HYDRO_UNAVAILABLE, readHydrawise, zonesFromCache } from "./hydro-cache";
 import { controllerNote } from "./hydrawise";
 import { applyPrefs, loadPrefs } from "./prefs";
@@ -20,16 +21,12 @@ const CACHE_MS = 20_000;
 /** Full Tuya status sweep. fresh=1 does not bypass this. */
 export const TUYA_MIN_MS = 60_000;
 const TUYA_KEY = "tuya_devices";
+const TUYA_KEEP_SEC = 6 * 60 * 60;
 
 let memory: { at: number; data: Snapshot } | null = null;
 
-export async function invalidateSnapshot(kv?: Pick<KVNamespace, "delete">): Promise<void> {
+export function invalidateSnapshot(): void {
   memory = null;
-  try {
-    await kv?.delete("snapshot_cache");
-  } catch {
-    /* the short assembly cache expires on its own */
-  }
 }
 
 export function groupSnapshot(input: {
@@ -116,30 +113,14 @@ export async function buildSnapshot(env: Env, opts?: { fresh?: boolean; now?: Da
 
 async function loadRawSnapshot(env: Env, opts?: { fresh?: boolean; now?: Date; client?: TuyaClient }): Promise<Snapshot> {
   if (!opts?.fresh && memory && Date.now() - memory.at < CACHE_MS) return memory.data;
-  if (!opts?.fresh) {
-    try {
-      const cached = await env.RULES.get("snapshot_cache", "json") as { at?: number; data?: Snapshot } | null;
-      if (cached?.data && cached.at && Date.now() - cached.at < CACHE_MS) {
-        memory = { at: cached.at, data: cached.data };
-        return cached.data;
-      }
-    } catch {
-      /* KV miss is fine */
-    }
-  }
   const data = await buildFresh(env, opts?.now ?? new Date(), opts?.client);
   memory = { at: Date.now(), data };
-  try {
-    await env.RULES.put("snapshot_cache", JSON.stringify({ at: Date.now(), data }), { expirationTtl: 60 });
-  } catch {
-    /* cache is optional */
-  }
   return data;
 }
 
 async function buildFresh(env: Env, now: Date, existing?: TuyaClient): Promise<Snapshot> {
   const errors: string[] = [];
-  const hydro = await readHydrawise(env.RULES, env.HYDRAWISE_API_KEY || "", now.getTime());
+  const hydro = await readHydrawise(env.HYDRAWISE_API_KEY || "", now.getTime());
   const zones = zonesFromCache(hydro, now);
   const controllerName = String(hydro.controller.name || "Hydrawise");
   const note = controllerNote(hydro.controller, hydro.schedule || {}, now);
@@ -150,33 +131,48 @@ async function buildFresh(env: Env, now: Date, existing?: TuyaClient): Promise<S
   return groupSnapshot({ devices: tuya.devices, zones, controllerName, controllerNote: note, errors, now });
 }
 
-type TuyaCache = { fetchedAt: number; devices: DeviceView[] };
+type TuyaCache = { fetchedAt: number; devices: DeviceView[]; error?: string };
+
+async function readTuya(): Promise<TuyaCache | null> {
+  try {
+    const raw = await productionEphemeral.get<TuyaCache>(TUYA_KEY);
+    if (!raw?.devices || !Array.isArray(raw.devices)) return null;
+    return { fetchedAt: Number(raw.fetchedAt) || 0, devices: raw.devices, error: typeof raw.error === "string" ? raw.error : undefined };
+  } catch {
+    return null;
+  }
+}
+
+async function writeTuya(cache: TuyaCache): Promise<void> {
+  try {
+    await productionEphemeral.put(TUYA_KEY, cache, TUYA_KEEP_SEC);
+  } catch {
+    /* the next call may repeat the sweep */
+  }
+}
 
 async function loadTuya(env: Env, now: Date, existing?: TuyaClient): Promise<{ devices: DeviceView[]; errors: string[] }> {
-  let cached: TuyaCache | null = null;
-  try {
-    const raw = await env.RULES.get(TUYA_KEY, "json") as TuyaCache | null;
-    if (raw?.devices && Array.isArray(raw.devices)) cached = { fetchedAt: Number(raw.fetchedAt) || 0, devices: raw.devices };
-  } catch {
-    cached = null;
+  const cached = await readTuya();
+  if (!env.TUYA_ACCESS_ID || !env.TUYA_ACCESS_SECRET) {
+    if (cached?.devices.length) return { devices: cached.devices, errors: ["Tuya לא רוענן, מוצג המצב האחרון."] };
+    return { devices: [], errors: ["Tuya: חסרים מפתחות"] };
   }
-  if (cached && now.getTime() - cached.fetchedAt < TUYA_MIN_MS) return { devices: cached.devices, errors: [] };
-  try {
-    await env.RULES.put(TUYA_KEY, JSON.stringify({ fetchedAt: now.getTime(), devices: cached?.devices || [] }));
-  } catch {
-    /* claim is best-effort */
+  if (cached && now.getTime() - cached.fetchedAt < TUYA_MIN_MS) {
+    return { devices: cached.devices, errors: cached.error ? [cached.error] : [] };
   }
+  await writeTuya({ fetchedAt: now.getTime(), devices: cached?.devices || [] });
   try {
     const loaded = await fetchPresented(env, now, existing);
-    try {
-      await env.RULES.put(TUYA_KEY, JSON.stringify({ fetchedAt: now.getTime(), devices: loaded.devices }));
-    } catch {
-      /* next call may repeat the sweep */
-    }
+    await writeTuya({ fetchedAt: now.getTime(), devices: loaded.devices });
     return loaded;
   } catch (err) {
-    if (cached?.devices.length) return { devices: cached.devices, errors: ["Tuya לא רוענן, מוצג המצב האחרון."] };
-    return { devices: [], errors: [`Tuya: ${err instanceof Error ? err.message : "שגיאה"}`] };
+    const message = err instanceof Error ? err.message : "שגיאה";
+    if (cached?.devices.length) {
+      const error = "Tuya לא רוענן, מוצג המצב האחרון.";
+      await writeTuya({ fetchedAt: now.getTime(), devices: cached.devices, error });
+      return { devices: cached.devices, errors: [error] };
+    }
+    return { devices: [], errors: [`Tuya: ${message}`] };
   }
 }
 
