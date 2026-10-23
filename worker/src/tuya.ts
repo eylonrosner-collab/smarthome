@@ -1,3 +1,5 @@
+import { productionEphemeral, type Ephemeral } from "./ephemeral";
+
 /**
  * Tuya OpenAPI signing, matching the working Python client:
  *   stringToSign = METHOD \n sha256(body) \n \n canonicalPath
@@ -71,13 +73,46 @@ export type TuyaResponse<T = unknown> = {
   result?: T;
 };
 
+/** Trial IoT Core monthly API quota (28841004). Shown on the dashboard and on commands. */
+export const TUYA_QUOTA_MESSAGE = "מכסת הקריאות של Tuya נגמרה החודש";
+/** After that error, make no Tuya calls. Kept in memory / Cache API, not KV. */
+export const TUYA_BACKOFF_MS = 60 * 60_000;
+const QUOTA_KEY = "tuya_quota";
+
+export function isTuyaQuota(code?: number | string, msg?: string): boolean {
+  if (String(code ?? "") === "28841004") return true;
+  return /28841004|trial quota is exhausted|iot core trial quota/i.test(msg || "");
+}
+
+export function isQuotaError(err: unknown): boolean {
+  return err instanceof TuyaError && (String(err.code) === "28841004" || err.message === TUYA_QUOTA_MESSAGE);
+}
+
 /** Trial IoT Core rejects commands once the controllable-device pool is used up. */
 export function tuyaUserMessage(msg?: string): string {
   const text = msg || "";
+  if (isTuyaQuota(undefined, text)) return TUYA_QUOTA_MESSAGE;
   if (/controllable device pool quota|quota is insufficient/i.test(text)) {
     return "מכסת השליטה של Tuya נגמרה. זו מגבלה של תוכנית הניסיון ב-IoT Core, לא תקלה בלוח. שדרוג התוכנית או המתנה לחידוש המכסה יחזירו את הפקודות.";
   }
   return text || "Tuya דחה את הפקודה";
+}
+
+export async function tuyaQuotaActive(store: Ephemeral, nowMs: number): Promise<boolean> {
+  try {
+    const row = await store.get<{ until?: number }>(QUOTA_KEY);
+    return Boolean(row && Number(row.until) > nowMs);
+  } catch {
+    return false;
+  }
+}
+
+export async function armTuyaQuota(store: Ephemeral, nowMs: number): Promise<void> {
+  try {
+    await store.put(QUOTA_KEY, { until: nowMs + TUYA_BACKOFF_MS }, Math.ceil(TUYA_BACKOFF_MS / 1000) + 60);
+  } catch {
+    /* this isolate still records the backoff below when the caller checks the thrown error */
+  }
 }
 
 export class TuyaError extends Error {
@@ -102,8 +137,17 @@ export class TuyaClient {
       base?: string;
       fetchImpl?: typeof fetch;
       now?: () => number;
+      store?: Ephemeral;
     },
   ) {}
+
+  private cache(): Ephemeral {
+    return this.opts.store ?? productionEphemeral;
+  }
+
+  private tokenKey(): string {
+    return `tuya_token:${this.opts.accessId}`;
+  }
 
   private base(): string {
     return (this.opts.base || "https://openapi.tuyaeu.com").replace(/\/$/, "");
@@ -114,6 +158,9 @@ export class TuyaClient {
   }
 
   async request<T = unknown>(method: string, path: string, bodyObj?: unknown): Promise<TuyaResponse<T>> {
+    if (await tuyaQuotaActive(this.cache(), this.now())) {
+      throw new TuyaError(TUYA_QUOTA_MESSAGE, 28841004);
+    }
     const isTokenCall = path.startsWith("/v1.0/token");
     const token = isTokenCall ? "" : await this.getToken();
     const body = bodyObj === undefined ? "" : JSON.stringify(bodyObj);
@@ -143,14 +190,24 @@ export class TuyaClient {
     let json: TuyaResponse<T>;
     try {
       json = (await res.json()) as TuyaResponse<T>;
-    } catch {
+    } catch (err) {
+      if (isQuotaError(err)) throw err;
       throw new TuyaError(`Tuya HTTP ${res.status}`);
+    }
+    if (isTuyaQuota(json.code, json.msg)) {
+      await armTuyaQuota(this.cache(), this.now());
+      throw new TuyaError(TUYA_QUOTA_MESSAGE, 28841004);
     }
     return json;
   }
 
   private async getToken(): Promise<string> {
     if (this.token && this.token.expireAt > this.now()) return this.token.access;
+    const shared = await this.cache().get<TokenCache>(this.tokenKey());
+    if (shared?.access && shared.expireAt > this.now()) {
+      this.token = shared;
+      return shared.access;
+    }
     if (this.token?.refresh) {
       const refreshed = await this.request<{
         access_token: string;
@@ -158,7 +215,7 @@ export class TuyaClient {
         expire_time: number;
       }>("GET", `/v1.0/token/${this.token.refresh}`);
       if (refreshed.success && refreshed.result?.access_token) {
-        this.remember(refreshed.result);
+        await this.remember(refreshed.result);
         return this.token!.access;
       }
     }
@@ -170,17 +227,19 @@ export class TuyaClient {
     if (!fresh.success || !fresh.result?.access_token) {
       throw new TuyaError(`token ${fresh.code ?? ""} ${fresh.msg ?? "failed"}`.trim(), fresh.code);
     }
-    this.remember(fresh.result);
+    await this.remember(fresh.result);
     return this.token!.access;
   }
 
-  private remember(result: { access_token: string; refresh_token: string; expire_time: number }) {
+  private async remember(result: { access_token: string; refresh_token: string; expire_time: number }) {
     const skew = 60_000;
     this.token = {
       access: result.access_token,
       refresh: result.refresh_token,
       expireAt: this.now() + Math.max(30, result.expire_time) * 1000 - skew,
     };
+    const ttl = Math.max(60, Math.ceil((this.token.expireAt - this.now()) / 1000));
+    await this.cache().put(this.tokenKey(), this.token, ttl);
   }
 
   async listDevices(): Promise<Record<string, unknown>[]> {
@@ -200,6 +259,30 @@ export class TuyaClient {
       if (batch.length < 20) break;
     }
     return devs;
+  }
+
+  /**
+   * One call for up to 20 devices. Returns null when the endpoint is not permitted
+   * so the caller can fall back to per-device status. Quota errors propagate.
+   */
+  async batchStatus(ids: string[]): Promise<Map<string, Record<string, unknown>> | null> {
+    const out = new Map<string, Record<string, unknown>>();
+    const unique = [...new Set(ids.filter(Boolean))];
+    if (!unique.length) return out;
+    for (let i = 0; i < unique.length; i += 20) {
+      const chunk = unique.slice(i, i + 20);
+      const query = new URLSearchParams({ device_ids: chunk.join(",") });
+      let response: TuyaResponse<unknown>;
+      try {
+        response = await this.request<unknown>("GET", `/v1.0/iot-03/devices/status?${query.toString()}`);
+      } catch (err) {
+        if (isQuotaError(err)) throw err;
+        return null;
+      }
+      if (!response.success) return null;
+      for (const row of unwrapBatchStatus(response.result)) out.set(row.id, row.status);
+    }
+    return out;
   }
 
   async deviceStatus(id: string): Promise<Record<string, unknown> | null> {
@@ -233,7 +316,8 @@ export class TuyaClient {
         if (x.identifier && x.identifier !== "main" && x.name) names[x.identifier] = x.name;
       }
       return names;
-    } catch {
+    } catch (err) {
+      if (isQuotaError(err)) throw err;
       return {};
     }
   }
@@ -263,6 +347,41 @@ export class TuyaClient {
       body,
     );
   }
+}
+
+function statusRecord(status: unknown): Record<string, unknown> {
+  if (Array.isArray(status)) {
+    const out: Record<string, unknown> = {};
+    for (const item of status) {
+      if (!item || typeof item !== "object") continue;
+      const row = item as { code?: string; value?: unknown };
+      if (row.code) out[row.code] = row.value;
+    }
+    return out;
+  }
+  if (status && typeof status === "object") return status as Record<string, unknown>;
+  return {};
+}
+
+function unwrapBatchStatus(result: unknown): { id: string; status: Record<string, unknown> }[] {
+  const list = Array.isArray(result)
+    ? result
+    : result && typeof result === "object"
+      ? ((result as { list?: unknown; devices?: unknown; data?: unknown }).list ||
+        (result as { devices?: unknown }).devices ||
+        (result as { data?: unknown }).data ||
+        [])
+      : [];
+  if (!Array.isArray(list)) return [];
+  const out: { id: string; status: Record<string, unknown> }[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as { id?: string; device_id?: string; status?: unknown };
+    const id = String(row.id || row.device_id || "");
+    if (!id) continue;
+    out.push({ id, status: statusRecord(row.status) });
+  }
+  return out;
 }
 
 function unwrapDeviceList(result: unknown): Record<string, unknown>[] {
