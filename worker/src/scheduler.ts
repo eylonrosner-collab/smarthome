@@ -2,15 +2,35 @@ import { planRuleActions, runPlanned } from "./execute";
 import { shouldFire, worldFromSnapshot, type Rule } from "./rules";
 import { buildSnapshot } from "./snapshot";
 import { appendActivity, loadRules, saveRules } from "./store";
+import type { Ephemeral } from "./ephemeral";
+import type { TuyaClient } from "./tuya";
 import type { Env } from "./types";
 
-export async function runScheduler(env: Env, now = new Date()): Promise<void> {
+export function sensorRefs(rules: Rule[]): { deviceId?: string; deviceName?: string }[] {
+  const refs: { deviceId?: string; deviceName?: string }[] = [];
+  for (const rule of rules) {
+    if (!rule.enabled || rule.trigger.type !== "sensor") continue;
+    refs.push({ deviceId: rule.trigger.deviceId, deviceName: rule.trigger.deviceName });
+    for (const condition of rule.conditions) {
+      if (condition.type === "sensor") refs.push({ deviceId: condition.deviceId, deviceName: condition.deviceName });
+    }
+  }
+  return refs;
+}
+
+export async function runScheduler(env: Env, now = new Date(), opts?: { client?: TuyaClient; store?: Ephemeral }): Promise<void> {
   const rules = await loadRules(env.RULES);
   const auto = rules.filter((r) => r.enabled && r.trigger.type !== "manual");
   if (!auto.length) return;
   let snap;
   try {
-    snap = await buildSnapshot(env, { fresh: true, now });
+    snap = await buildSnapshot(env, {
+      fresh: true,
+      now,
+      client: opts?.client,
+      store: opts?.store,
+      tuya: { mode: "sensors", refs: sensorRefs(rules) },
+    });
   } catch {
     // A snapshot failure is visible on the next dashboard load. Logging it here
     // would write KV on every quiet tick.

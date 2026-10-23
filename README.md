@@ -10,7 +10,7 @@
 2. מזינים את הסיסמה פעם אחת. היא נשמרת רק בדפדפן (`localStorage`), לא באתר.
 3. בכרטיס של כל מכשיר: הדלקה וכיבוי של כל מתג, פתיחה/סגירה/עצירה/מיקום לתריס, הפעלה/מצב/טמפרטורה למזגן, והשקיה/עצירה/השהיה לאזור. «שינוי שם» (העיפרון) ו«הסתר» זמינים לכל מכשיר ולכל מתג. מה שמוסתר נעלם מהלוח; «הצג מוסתרים» מחזיר אותו עם סימון ואפשרות להציג שוב. השם שנבחר מחליף את שם ה-Tuya גם בלוח וגם כשכותבים תרחיש, ונשמר בשרת כדי שיהיה זהה בטלפון ובמחשב.
 4. בלשונית **תרחישים** כותבים משפט בעברית או באנגלית. המערכת מציגה בעברית מה היא הבינה, ורק אחרי אישור התרחיש נשמר.
-5. בלשונית **יומן** רואים מה רץ לאחרונה. בדיקה אוטומטית רצה כל חמש דקות לפי שעון ישראל, ונרשמת ביומן רק כשתרחיש באמת רץ. הלוח מתרענן בערך פעם בדקה. אם Hydrawise עמוס, אזורי ההשקיה נשארים על המסך עם הסימון «נתונים ישנים» והשעה האחרונה שבה הם עודכנו.
+5. בלשונית **יומן** רואים מה רץ לאחרונה. בדיקה אוטומטית רצה כל חמש דקות לפי שעון ישראל, ונרשמת ביומן רק כשתרחיש באמת רץ. הלוח מתרענן בערך פעם בדקה; מצב המכשירים של Tuya נקרא מחדש לכל היותר כל חצי שעה. אם Hydrawise עמוס, אזורי ההשקיה נשארים על המסך עם הסימון «נתונים ישנים» והשעה האחרונה שבה הם עודכנו. אם מכסת הקריאות החודשית של Tuya נגמרה, הלוח מציג את המצב השמור ואת ההודעה «מכסת הקריאות של Tuya נגמרה החודש».
 
 דוגמאות:
 
@@ -32,7 +32,7 @@
 | `docs/config.js` | The only site setting: the public Worker URL. |
 | `worker/` | Cloudflare Worker. Holds `TUYA_ACCESS_ID`, `TUYA_ACCESS_SECRET`, `HYDRAWISE_API_KEY`, and `DASH_PASSWORD`. |
 | Workers KV `RULES` | Only durable data: scenarios, hide/rename prefs, and the activity log. A write happens when one of those actually changes. |
-| Status cache | Hydrawise and Tuya status, plus the rate-limit timestamp, live in memory and the Cache API. Not in KV. `statusschedule.php` at most about once a minute (or longer when `nextpoll` is set), including `fresh=1`. A 429 keeps the last zones. |
+| Status cache | Hydrawise and Tuya status live in memory and the Cache API, not KV. Hydrawise `statusschedule.php` at most about once a minute (or longer when `nextpoll` is set), including `fresh=1`. A 429 keeps the last zones. Tuya device metadata is cached for 24 hours. A full status sweep runs at most every 30 minutes, and only while the dashboard is open. Cron reads Tuya only for devices referenced by an enabled sensor rule, in one batch call. |
 | Workers AI | Turns a free-text scenario into a JSON rule. Model: `@cf/meta/llama-3.3-70b-instruct-fp8-fast`. |
 | Cron `*/5 * * * *` | Evaluates enabled rules in `Asia/Jerusalem`. A tick where nothing fires does not write to KV. |
 
